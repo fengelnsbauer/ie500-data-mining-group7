@@ -9,6 +9,7 @@ readme = "README.md"
 python = "^3.12"
 pandas = "^2.2.3"
 ipykernel = "^6.29.5"
+fastf1 = "^3.4.3"
 
 
 [build-system]
