@@ -19,6 +19,11 @@ backoff = "^2.2.1"
 xgboost = "^2.1.2"
 tqdm = "^4.67.0"
 ipywidgets = "^8.1.5"
+torch = "^2.5.1"
+pytorch-lightning = "^2.4.0"
+tensorboard = "^2.18.0"
+torch-tb-profiler = "^0.4.3"
+lightning = "^2.4.0"
 
 
 [build-system]
