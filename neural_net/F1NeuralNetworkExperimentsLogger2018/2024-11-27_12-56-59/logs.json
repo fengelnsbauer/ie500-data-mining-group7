@@ -1,0 +1,163 @@
+{
+    "used_features": [
+        "raceId",
+        "driverId",
+        "constructorId",
+        "grid",
+        "round",
+        "circuitId",
+        "race_lat",
+        "race_lng",
+        "race_alt",
+        "avg_pit_stop_duration",
+        "max_pit_stop_duration",
+        "avg_pit_stop_duration",
+        "std_pit_stop_duration",
+        "milliseconds_count",
+        "pit_stop_count",
+        "min_pit_stop_lap",
+        "max_pit_stop_lap",
+        "avg_pit_stop_lap",
+        "std_pit_stop_lap",
+        "avg_pit_stop_driver",
+        "avg_pit_stop_team",
+        "avg_pit_stop_track",
+        "avg_pit_stop_season",
+        "rolling_avg_pit_stop_driver",
+        "rolling_avg_pit_stop_team",
+        "rolling_avg_pit_stop_track",
+        "rolling_avg_pit_stop_season",
+        "milliseconds_count"
+    ],
+    "model_architecture": "Sequential(\n  (0): Linear(in_features=28, out_features=64, bias=True)\n  (1): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (2): ReLU()\n  (3): Dropout(p=0.2, inplace=False)\n  (4): Linear(in_features=64, out_features=128, bias=True)\n  (5): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (6): ReLU()\n  (7): Dropout(p=0.3, inplace=False)\n  (8): Linear(in_features=128, out_features=256, bias=True)\n  (9): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (10): ReLU()\n  (11): Dropout(p=0.3, inplace=False)\n  (12): Linear(in_features=256, out_features=128, bias=True)\n  (13): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (14): ReLU()\n  (15): Dropout(p=0.2, inplace=False)\n  (16): Linear(in_features=128, out_features=64, bias=True)\n  (17): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (18): ReLU()\n  (19): Linear(in_features=64, out_features=1, bias=True)\n)",
+    "optimizer": "AdamW (\nParameter Group 0\n    amsgrad: False\n    base_momentum: 0.85\n    betas: (0.95, 0.999)\n    capturable: False\n    differentiable: False\n    eps: 1e-08\n    foreach: None\n    fused: None\n    initial_lr: 4e-05\n    lr: 3.9999999999999996e-05\n    max_lr: 0.001\n    max_momentum: 0.95\n    maximize: False\n    min_lr: 4e-09\n    weight_decay: 0.01\n)",
+    "scheduler": "<torch.optim.lr_scheduler.OneCycleLR object at 0x30d287200>",
+    "hyperparameters": {
+        "input_dim": "28",
+        "hidden_dim": "64",
+        "output_dim": "1",
+        "lr": "0.001",
+        "loss_fn": "<class 'torch.nn.modules.loss.L1Loss'>"
+    },
+    "metrics": [
+        {
+            "step": 49,
+            "metrics": {
+                "train_loss": 10.782936096191406,
+                "epoch": 0.0
+            }
+        },
+        {
+            "step": 99,
+            "metrics": {
+                "train_loss": 10.64204216003418,
+                "epoch": 1.0
+            }
+        },
+        {
+            "step": 149,
+            "metrics": {
+                "train_loss": 12.21157455444336,
+                "epoch": 1.0
+            }
+        },
+        {
+            "step": 199,
+            "metrics": {
+                "train_loss": 11.553321838378906,
+                "epoch": 2.0
+            }
+        },
+        {
+            "step": 249,
+            "metrics": {
+                "train_loss": 12.186042785644531,
+                "epoch": 2.0
+            }
+        },
+        {
+            "step": 299,
+            "metrics": {
+                "train_loss": 11.082250595092773,
+                "epoch": 3.0
+            }
+        },
+        {
+            "step": 349,
+            "metrics": {
+                "train_loss": 9.227371215820312,
+                "epoch": 3.0
+            }
+        },
+        {
+            "step": 399,
+            "metrics": {
+                "train_loss": 9.90543270111084,
+                "epoch": 4.0
+            }
+        },
+        {
+            "step": 449,
+            "metrics": {
+                "train_loss": 8.86587905883789,
+                "epoch": 5.0
+            }
+        },
+        {
+            "step": 499,
+            "metrics": {
+                "train_loss": 11.619377136230469,
+                "epoch": 5.0
+            }
+        },
+        {
+            "step": 549,
+            "metrics": {
+                "train_loss": 8.635210037231445,
+                "epoch": 6.0
+            }
+        },
+        {
+            "step": 599,
+            "metrics": {
+                "train_loss": 9.099588394165039,
+                "epoch": 6.0
+            }
+        },
+        {
+            "step": 649,
+            "metrics": {
+                "train_loss": 10.058364868164062,
+                "epoch": 7.0
+            }
+        },
+        {
+            "step": 699,
+            "metrics": {
+                "train_loss": 11.098274230957031,
+                "epoch": 7.0
+            }
+        },
+        {
+            "step": 749,
+            "metrics": {
+                "train_loss": 8.075807571411133,
+                "epoch": 8.0
+            }
+        },
+        {
+            "step": 799,
+            "metrics": {
+                "train_loss": 7.986515998840332,
+                "epoch": 8.0
+            }
+        },
+        {
+            "step": 849,
+            "metrics": {
+                "train_loss": 11.48867130279541,
+                "epoch": 9.0
+            }
+        }
+    ]
+}
