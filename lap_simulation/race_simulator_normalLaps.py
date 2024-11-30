@@ -232,14 +232,16 @@ class RaceSimulator:
 
 
 
+# Analyze results
 def plot_race_positions(race):
     plt.figure(figsize=(12, 6))
-
+    
     for driver in race.drivers:
         positions = race.lap_data[driver.driver_id]['positions']
-        plt.plot(range(1, race.total_laps + 1), positions, label=driver.name)
-
-    plt.gca().invert_yaxis()  # Position 1 at the top
+        total_laps = len(positions)  # Get actual number of laps
+        plt.plot(range(1, total_laps + 1), positions, label=driver.name)
+    
+    plt.gca().invert_yaxis()  # Invert y-axis so that position 1 is at the top
     plt.xlabel('Lap')
     plt.ylabel('Position')
     plt.title('Race Simulation: Driver Positions Over Laps')
@@ -252,14 +254,14 @@ def plot_race_positions(race):
 
     plt.show()
 
-
 def plot_lap_times(race):
     plt.figure(figsize=(12, 6))
-
+    
     for driver in race.drivers:
         lap_times = race.lap_data[driver.driver_id]['lap_times']
-        plt.plot(range(1, race.total_laps + 1), lap_times, label=driver.name)
-
+        total_laps = len(lap_times)  # Get actual number of laps
+        plt.plot(range(1, total_laps + 1), lap_times, label=driver.name)
+    
     plt.xlabel('Lap')
     plt.ylabel('Lap Time (ms)')
     plt.title('Race Simulation: Driver Lap Times')
@@ -272,7 +274,6 @@ def plot_lap_times(race):
 
     plt.show()
 
-
 def create_lap_times_dataframe(race) -> pd.DataFrame:
     data = {'Lap': []}
     total_laps = race.total_laps
@@ -281,6 +282,7 @@ def create_lap_times_dataframe(race) -> pd.DataFrame:
     data['Lap'] = list(range(1, total_laps + 1))
     lap_times_df = pd.DataFrame(data)
     return lap_times_df
+
 
 def create_lap_times_with_inputs_dataframe(race, race_features) -> pd.DataFrame:
     records = []
