@@ -220,12 +220,12 @@ def preprocess_data():
     # Convert LapTime to milliseconds
     practice_sessions['LapTime_ms'] = practice_sessions['LapTime'].apply(lambda x: pd.to_timedelta(x).total_seconds() * 1000)
     
-    # Calculate median lap times for each driver in each session
+    # Calculate median lap times for each driver in each session (per race)
     session_medians = practice_sessions.groupby(['raceId', 'driverId', 'SessionName'])['LapTime_ms'].median().reset_index()
 
-    # Pivot the data to have sessions as columns
+    # Pivot the data to have sessions as columns (preserves raceId and driverId context)
     session_medians_pivot = session_medians.pivot_table(
-        index=['raceId', 'driverId'],
+        index=['raceId', 'driverId'],  # Keep raceId and driverId as indices
         columns='SessionName',
         values='LapTime_ms'
     ).reset_index()
@@ -238,8 +238,22 @@ def preprocess_data():
         'Q': 'quali_time'
     }, inplace=True)
 
-    # Merge session medians with laps
-    laps = laps.merge(session_medians_pivot, on=['raceId', 'driverId'], how='left')
+
+    laps = laps.merge(
+        session_medians_pivot,
+        on=['raceId', 'driverId'],  # Merge on raceId and driverId
+        how='left'  # Ensure all laps data is retained
+    )
+
+    # Calculate global median times for each FP session within each race
+    global_medians = session_medians.groupby('SessionName')['LapTime_ms'].median()
+
+    # Fill missing FP times for each session
+    laps['fp1_median_time'].fillna(global_medians.get('FP1', 0), inplace=True)
+    laps['fp2_median_time'].fillna(global_medians.get('FP2', 0), inplace=True)
+    laps['fp3_median_time'].fillna(global_medians.get('FP3', 0), inplace=True)
+    laps['quali_time'].fillna(global_medians.get('Q', 0), inplace=True)
+
 
     # For missing session times, fill with global means for that session within the same race
     for session in ['fp1_median_time', 'fp2_median_time', 'fp3_median_time', 'quali_time']:
@@ -625,45 +639,41 @@ def preprocess_data():
     # Drop rows with missing values in required columns
     laps = laps[laps['year'] >= 2018]
     laps = laps.dropna(subset=required_columns)
-    # For drivers_df - keep only driver-specific attributes
-    drivers_df = laps.groupby('driverId').agg({
+
+    # Create driver-specific attributes per race
+    drivers_df = laps.groupby(['driverId', 'raceId']).agg({
         'driver_overall_skill': 'last',
         'driver_circuit_skill': 'last',
         'driver_consistency': 'last',
         'driver_reliability': 'last',
         'driver_aggression': 'last',
         'driver_risk_taking': 'last',
-        'constructor_performance': 'last'  # Most recent constructor performance
+        'constructor_performance': 'last',  # Most recent constructor performance
+        'fp1_median_time': 'last',  # Include session times
+        'fp2_median_time': 'last',
+        'fp3_median_time': 'last',
+        'quali_time': 'last'
     }).reset_index()
 
     # Save the driver-specific attributes
     drivers_df.to_csv('data/util/drivers_attributes.csv', index=False)
+
 
     # For race_attributes_df - aggregate race-specific attributes
     race_attributes_df = laps.groupby('raceId').agg({
         'circuitId': 'first',
         'track_temp': 'mean',
         'air_temp': 'mean',
-        'humidity': 'mean',
-        'fp1_median_time': 'mean',
-        'fp2_median_time': 'mean',
-        'fp3_median_time': 'mean',
-        'quali_time': 'mean'
+        'humidity': 'mean'
     }).reset_index()
 
     # Save the race-specific attributes
     race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
 
-
     laps.drop(columns=['raceId_x', 'year_y', 'Time', 'AirTemp', 'Humidity', 'Pressure', 'Rainfall', 'TrackTemp', 'WindDirection', 'WindSpeed',
                         'Year', 'year_x', 'EventName', 'SessionName', 'EventName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
                         'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 'R', 'S', 'EventFormat',
                         'quali_date', 'quali_date_time', 'sprint_date', 'sprint_time', 'url_y', 'fastestLap'], inplace=True)
-
-    drivers_df = laps[['driverId', 'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',
-                   'driver_reliability', 'driver_aggression', 'driver_risk_taking']].drop_duplicates()
-    
-    drivers_df.to_csv('data/util/drivers_attributes.csv', index=False)
 
     race_attributes_df = laps[['raceId', 'circuitId', 'fp1_median_time', 'fp2_median_time',
                            'fp3_median_time', 'quali_time', 'track_temp', 'air_temp', 'humidity']].drop_duplicates()
