@@ -509,7 +509,8 @@ def preprocess_data():
         normal_racing_mask = (
             (df['TrackStatus'] == 1) &      # Normal racing conditions
             (df['is_pit_lap'] == 0) &       # No pit stops
-            (df['lap'] > 1)                 # Exclude first lap
+            (df['lap'] > 1) &
+            (df['milliseconds'] < 120000)              # Exclude first lap
         )
         
         special_laps = df[~normal_racing_mask]
@@ -553,6 +554,10 @@ def preprocess_data():
     # Drop rows with missing values in required columns
     laps = laps[laps['year'] >= 2018]
     laps = laps.dropna(subset=required_columns)
+
+    laps.drop(columns=['raceId_x', 'year_y', 'Time', 'AirTemp', 'Humidity', 'Pressure', 'Rainfall', 'TrackTemp', 'WindDirection', 'WindSpeed',
+                        'Year', 'year_x', 'EventName', 'SessionName', 'EventName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
+                        'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 'R', 'S', 'EventFormat'], inplace=True)
 
     drivers_df = laps[['driverId', 'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',
                    'driver_reliability', 'driver_aggression', 'driver_risk_taking']].drop_duplicates()
