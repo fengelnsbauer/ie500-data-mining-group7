@@ -1,0 +1,78 @@
+Data Structure an snippets of Available Data, data has no dtypes assigned yet:
+
+"""
+circuits.csv:
+circuitId,circuitRef,name,location,country,lat,lng,alt,url
+1,"albert_park","Albert Park Grand Prix Circuit","Melbourne","Australia",-37.8497,144.968,10,"http://en.wikipedia.org/wiki/Melbourne_Grand_Prix_Circuit"
+
+constructor_results.csv:
+constructorResultsId,raceId,constructorId,points,status
+1,18,1,14,\N
+
+constructors.csv:
+constructorId,constructorRef,name,nationality,url
+1,"mclaren","McLaren","British","http://en.wikipedia.org/wiki/McLaren"
+
+driver_standings.csv:
+driverStandingsId,raceId,driverId,points,position,positionText,wins
+1,18,1,10,1,"1",1
+''
+drivers.csv:
+driverId,driverRef,number,code,forename,surname,dob,nationality,url
+1,"hamilton",44,"HAM","Lewis","Hamilton","1985-01-07","British","http://en.wikipedia.org/wiki/Lewis_Hamilton"
+
+lap_times.csv:
+raceId,driverId,lap,position,time,milliseconds
+841,20,1,1,"1:38.109",98109
+
+pit_stops.csv:
+raceId,driverId,stop,lap,time,duration,milliseconds
+841,153,1,1,"17:05:23","26.898",26898
+
+qualifying.csv:
+qualifyId,raceId,driverId,constructorId,number,position,q1,q2,q3
+1,18,1,1,22,1,"1:26.572","1:25.187","1:26.714"
+
+races.csv:
+raceId,year,round,circuitId,name,date,time,url,fp1_date,fp1_time,fp2_date,fp2_time,fp3_date,fp3_time,quali_date,quali_time,sprint_date,sprint_time
+1,2009,1,1,"Australian Grand Prix","2009-03-29","06:00:00","http://en.wikipedia.org/wiki/2009_Australian_Grand_Prix",\N,\N,\N,\N,\N,\N,\N,\N,\N,\N
+
+results.csv:
+resultId,raceId,driverId,constructorId,number,grid,position,positionText,positionOrder,points,laps,time,milliseconds,fastestLap,rank,fastestLapTime,fastestLapSpeed,statusId
+1,18,1,1,22,1,1,"1",1,10,58,"1:34:50.616",5690616,39,2,"1:27.452","218.300",1
+
+seasons.csv:
+year,url
+2009,"http://en.wikipedia.org/wiki/2009_Formula_One_season"
+
+sprint_results.csv:
+resultId,raceId,driverId,constructorId,number,grid,position,positionText,positionOrder,points,laps,time,milliseconds,fastestLap,fastestLapTime,statusId
+1,1061,830,9,33,2,1,"1",1,3,17,"25:38.426",1538426,14,"1:30.013",1
+
+status.csv:
+statusId,status
+1,"Finished"
+
+export_2018_v1.csv:
+raceId,driver,q1_time,q2_time,q3_time,q_position,fp1_avg_sector_1,fp1_avg_sector_2,fp1_avg_lap_time,fp1_avg_speedI1,fp1_avg_speedI2,fp1_avg_speedFL,fp1_avg_speedST,fp1_avg_tyre_life,fp1_avg_is_on_fresh_tyres,fp2_avg_sector_1,fp2_avg_sector_2,fp2_avg_lap_time,fp2_avg_speedI1,fp2_avg_speedI2,fp2_avg_speedFL,fp2_avg_speedST,fp2_avg_tyre_life,fp2_avg_is_on_fresh_tyres,fp3_avg_sector_1,fp3_avg_sector_2,fp3_avg_lap_time,fp3_avg_speedI1,fp3_avg_speedI2,fp3_avg_speedFL,fp3_avg_speedST,fp3_avg_tyre_life,fp3_avg_is_on_fresh_tyres,driver_code
+1024,LEC,98014.0,96650.0,96217.0,1.0,28254.8,40635.2,104875.2,301.8,273.8,248.6,289.8,5.6,1.0,27905.428571428572,39466.57142857143,102203.14285714286,305.0,273.2857142857143,253.71428571428572,294.2,6.285714285714286,0.5714285714285714,26996.25,38197.75,99164.75,313.0,283.25,261.5,302.0,3.25,1.0,
+
+
+export_2018_full_v1.csv:
+resultId,raceId,driverId,constructorId,number,grid,year,round,circuitId,race_name,race_date,race_time,fp1_date,fp2_date,fp3_date,fp1_time,fp2_time,fp3_time,quali_time,quali_date,race_location,race_country,race_lat,race_lng,race_alt,q1,q2,q3,position,driver_dob,driver_nationality,driver_code,min_pit_stop_duration,max_pit_stop_duration,avg_pit_stop_duration,std_pit_stop_duration,milliseconds_count,pit_stop_count,min_pit_stop_lap,max_pit_stop_lap,avg_pit_stop_lap,std_pit_stop_lap,avg_pit_stop_driver,avg_pit_stop_team,avg_pit_stop_track,avg_pit_stop_season,rolling_avg_pit_stop_driver,rolling_avg_pit_stop_team,rolling_avg_pit_stop_track,rolling_avg_pit_stop_season,driver,q1_time,q2_time,q3_time,q_position,fp1_avg_sector_1,fp1_avg_sector_2,fp1_avg_lap_time,fp1_avg_speedI1,fp1_avg_speedI2,fp1_avg_speedFL,fp1_avg_speedST,fp1_avg_tyre_life,fp1_avg_is_on_fresh_tyres,fp2_avg_sector_1,fp2_avg_sector_2,fp2_avg_lap_time,fp2_avg_speedI1,fp2_avg_speedI2,fp2_avg_speedFL,fp2_avg_speedST,fp2_avg_tyre_life,fp2_avg_is_on_fresh_tyres,fp3_avg_sector_1,fp3_avg_sector_2,fp3_avg_lap_time,fp3_avg_speedI1,fp3_avg_speedI2,fp3_avg_speedFL,fp3_avg_speedST,fp3_avg_tyre_life,fp3_avg_is_on_fresh_tyres
+23782,989,20,6,5,3,2018,1,1,Australian Grand Prix,2018-03-25,05:10:00,\N,\N,\N,\N,\N,\N,\N,\N,Melbourne,Australia,-37.8497,144.968,10,1:23.348,1:21.944,1:21.838,3.0,1987-07-03,German,VET,21787.0,21787.0,21787.0,0.0,1.0,1.0,26.0,26.0,26.0,0.0,235976.2,37075.63293650794,136768.01680672268,24639.64864864865,235976.2,235976.2,235976.2,25191.6,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+export_v1.csv:
+
+resultId,raceId,driverId,constructorId,number,grid,year,round,circuitId,race_name,race_date,race_time,fp1_date,fp2_date,fp3_date,fp1_time,fp2_time,fp3_time,quali_time,quali_date,race_location,race_country,race_lat,race_lng,race_alt,q1,q2,q3,position,driver_dob,driver_nationality,driver_code,min_pit_stop_duration,max_pit_stop_duration,avg_pit_stop_duration,std_pit_stop_duration,milliseconds_count,pit_stop_count,min_pit_stop_lap,max_pit_stop_lap,avg_pit_stop_lap,std_pit_stop_lap,avg_pit_stop_driver,avg_pit_stop_team,avg_pit_stop_track,avg_pit_stop_season,rolling_avg_pit_stop_driver,rolling_avg_pit_stop_team,rolling_avg_pit_stop_track,rolling_avg_pit_stop_season
+1,18,1,1,22,1,2008,1,1,Australian Grand Prix,2008-03-16,04:30:00,\N,\N,\N,\N,\N,\N,\N,\N,Melbourne,Australia,-37.8497,144.968,10,1:26.572,1:25.187,1:26.714,1.0,1985-01-07,British,HAM,,,,,,,,,,,,,,,,,,
+"""
+
+f1_free_practice.csv:
+Time,Driver,DriverNumber,LapTime,LapNumber,Stint,PitOutTime,PitInTime,Sector1Time,Sector2Time,Sector3Time,Sector1SessionTime,Sector2SessionTime,Sector3SessionTime,SpeedI1,SpeedI2,SpeedFL,SpeedST,IsPersonalBest,Compound,TyreLife,FreshTyre,Team,LapStartTime,LapStartDate,TrackStatus,Position,Deleted,DeletedReason,FastF1Generated,IsAccurate,Year,EventName,SessionName
+0 days 00:07:46.220000,GAS,10,0 days 00:02:02.753000,1.0,,0 days 00:05:46.206000,,0 days 00:00:46.335000,0 days 00:00:28.316000,0 days 00:00:48.102000,0 days 00:06:29.802000,0 days 00:06:58.138000,0 days 00:07:46.289000,236.0,198.0,249.0,184.0,False,nan,,True,Toro Rosso,0 days 00:05:46.206000,2018-03-23 01:01:46.930,,,False,,False,False,2018,Australian Grand Prix,FP1
+
+
+ff1_weather.csv:
+Time,AirTemp,Humidity,Pressure,Rainfall,TrackTemp,WindDirection,WindSpeed,Year,EventName,SessionName,RoundNumber,SessionDate
+53.24,18.1,72.0,1012.0,False,20.8,266,1.2,2018,Chinese Grand Prix,FP2,3,2018-04-13 06:00:00ff1_free_practice.csv:

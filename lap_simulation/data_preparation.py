@@ -268,15 +268,42 @@ def preprocess_data():
         """
         For each lap, find the closest weather measurement in time
         """
-        race_laps = race_laps.sort_values('seconds_from_start')
-        race_weather = race_weather.sort_values('seconds_from_start')
-        merged = pd.merge_asof(
-            race_laps,
-            race_weather,
-            on='seconds_from_start',
-            direction='nearest'
-        )
-        return merged
+        try:
+            # Convert seconds_from_start to float64 in both DataFrames
+            race_laps = race_laps.copy()
+            race_weather = race_weather.copy()
+            
+            race_laps['seconds_from_start'] = pd.to_numeric(race_laps['seconds_from_start'], errors='coerce')
+            race_weather['seconds_from_start'] = pd.to_numeric(race_weather['seconds_from_start'], errors='coerce')
+            
+            # Drop any rows where conversion failed (resulted in NaN)
+            race_laps = race_laps.dropna(subset=['seconds_from_start'])
+            race_weather = race_weather.dropna(subset=['seconds_from_start'])
+            
+            # Sort both DataFrames by seconds_from_start
+            race_laps = race_laps.sort_values('seconds_from_start')
+            race_weather = race_weather.sort_values('seconds_from_start')
+            
+            # Perform the asof merge
+            merged = pd.merge_asof(
+                race_laps,
+                race_weather,
+                on='seconds_from_start',
+                direction='nearest'
+            )
+            
+            if merged.empty:
+                print("Warning: Merged result is empty. Check if there is overlapping time data.")
+                
+            return merged
+        
+        except Exception as e:
+            print(f"Error in matching weather to lap data: {str(e)}")
+            print("\nRace laps seconds_from_start dtype:", race_laps['seconds_from_start'].dtype)
+            print("Race weather seconds_from_start dtype:", race_weather['seconds_from_start'].dtype)
+            print("\nSample of race_laps seconds_from_start:", race_laps['seconds_from_start'].head())
+            print("\nSample of race_weather seconds_from_start:", race_weather['seconds_from_start'].head())
+            raise
 
     # Apply matching per race
     matched_laps_list = []
@@ -514,7 +541,7 @@ def preprocess_data():
         return final_df
 
     # Usage example:
-    laps = remove_outliers_group(laps)
+    laps = remove_lap_time_outliers(laps)
     
     # Update required columns
     required_columns = race_features.static_features + race_features.dynamic_features
