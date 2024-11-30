@@ -398,6 +398,64 @@ def preprocess_data():
         
         return aggression
     
+    def calculate_consistency(lap_times_df, driver_id, num_recent_races=5):
+        """
+        Calculate driver consistency based on lap time variability over recent races.
+        Args:
+            lap_times_df (DataFrame): DataFrame containing lap times.
+            driver_id (int): Driver ID.
+            num_recent_races (int): Number of recent races to consider.
+        Returns:
+            float: Consistency score between 0 and 1.
+        """
+        # Filter lap times for the driver
+        driver_lap_times = lap_times_df[lap_times_df['driverId'] == driver_id]
+        
+        # Get recent race IDs
+        recent_races = driver_lap_times['raceId'].unique()
+        recent_races = sorted(recent_races, reverse=True)[:num_recent_races]
+        
+        # Filter lap times for recent races
+        recent_lap_times = driver_lap_times[driver_lap_times['raceId'].isin(recent_races)]
+        
+        if recent_lap_times.empty or len(recent_lap_times) < 5:
+            return 0.5  # Default consistency for insufficient data
+        
+        # Calculate lap time variance
+        lap_time_variance = recent_lap_times['milliseconds'].var()
+        
+        # Normalize variance (lower variance means higher consistency)
+        # Invert and normalize between 0 and 1
+        max_variance = lap_times_df['milliseconds'].var()
+        consistency_score = 1 - (lap_time_variance / max_variance)
+        consistency_score = np.clip(consistency_score, 0, 1)
+        
+        return consistency_score
+
+    def calculate_reliability(driver_results, num_recent_races=10):
+        """
+        Calculate driver reliability based on race finishes over recent races.
+        Args:
+            driver_results (DataFrame): DataFrame containing driver results.
+            num_recent_races (int): Number of recent races to consider.
+        Returns:
+            float: Reliability score between 0 and 1.
+        """
+        # Get recent races
+        recent_results = driver_results.sort_values('date', ascending=False).head(num_recent_races)
+        
+        if recent_results.empty or len(recent_results) == 0:
+            return 0.5  # Default reliability for new drivers
+        
+        # Calculate proportion of races finished
+        races_finished = (recent_results['status'] == 'Finished').sum()
+        total_races = len(recent_results)
+        reliability_score = races_finished / total_races
+        reliability_score = np.clip(reliability_score, 0, 1)
+        
+        return reliability_score
+
+    
     # Modify calculate_skill function
     def calculate_skill(driver_data, results_data, circuit_id, constructor_performance):
         driver_results = results_data[
@@ -453,15 +511,26 @@ def preprocess_data():
         how='left'
     )
 
-    # Now calculate driver aggression and skill
+    # Map statusId to status descriptions
+    status_dict = status.set_index('statusId')['status'].to_dict()
+    results['status'] = results['statusId'].map(status_dict)
+    
+    # Copy lap_times DataFrame for consistency calculations
+    lap_times_df = lap_times.copy()
+    
+    # Now calculate driver aggression, skill, consistency, and reliability
     driver_aggression = {}
     driver_skill = {}
+    driver_consistency = {}
+    driver_reliability = {}
     for driver_id in drivers['driverId'].unique():
         driver_results = results[results['driverId'] == driver_id]
+        
+        # Calculate aggression
         aggression = calculate_aggression(driver_results)
         driver_aggression[driver_id] = aggression
         
-        # Now we have circuit_id from the merge
+        # Calculate skill
         recent_race = driver_results.sort_values('date', ascending=False).head(1)
         if not recent_race.empty:
             circuit_id = recent_race['circuitId'].iloc[0]
@@ -470,14 +539,23 @@ def preprocess_data():
             driver_skill[driver_id] = skill
         else:
             driver_skill[driver_id] = 0.5  # Default skill for new drivers
+        
+        # Calculate consistency
+        consistency = calculate_consistency(lap_times_df, driver_id, num_recent_races=5)
+        driver_consistency[driver_id] = consistency
+        
+        # Calculate reliability
+        reliability = calculate_reliability(driver_results, num_recent_races=10)
+        driver_reliability[driver_id] = reliability
     
-    # Map calculated aggression and skill back to laps DataFrame
+    # Map calculated metrics back to laps DataFrame
     laps['driver_aggression'] = laps['driverId'].map(driver_aggression)
     laps['driver_overall_skill'] = laps['driverId'].map(driver_skill)
     laps['driver_circuit_skill'] = laps['driver_overall_skill']  # For simplicity, using overall skill
-    laps['driver_consistency'] = 0.5  # Placeholder
-    laps['driver_reliability'] = 0.5  # Placeholder
+    laps['driver_consistency'] = laps['driverId'].map(driver_consistency)
+    laps['driver_reliability'] = laps['driverId'].map(driver_reliability)
     laps['driver_risk_taking'] = laps['driver_aggression']  # Assuming similar to aggression
+    
     
     # Dynamic features
     laps['tire_age'] = laps.groupby(['raceId', 'driverId'])['lap'].cumcount()
@@ -537,9 +615,9 @@ def preprocess_data():
         # Combine cleaned normal laps with special laps
         final_df = pd.concat([cleaned_normal_laps, special_laps], ignore_index=True)
         
-        print(f"Final shape after outlier removal: {final_df.shape}")
+        print(f"Final shape after outlier removal: {cleaned_normal_laps.shape}")
         
-        return final_df
+        return cleaned_normal_laps
 
     # Usage example:
     laps = remove_lap_time_outliers(laps)
@@ -557,7 +635,8 @@ def preprocess_data():
 
     laps.drop(columns=['raceId_x', 'year_y', 'Time', 'AirTemp', 'Humidity', 'Pressure', 'Rainfall', 'TrackTemp', 'WindDirection', 'WindSpeed',
                         'Year', 'year_x', 'EventName', 'SessionName', 'EventName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
-                        'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 'R', 'S', 'EventFormat'], inplace=True)
+                        'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 'R', 'S', 'EventFormat',
+                        'quali_date', 'quali_date_time', 'sprint_date', 'sprint_time', 'url_y', 'fastestLap'], inplace=True)
 
     drivers_df = laps[['driverId', 'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',
                    'driver_reliability', 'driver_aggression', 'driver_risk_taking']].drop_duplicates()
