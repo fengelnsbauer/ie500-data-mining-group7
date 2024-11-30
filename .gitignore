@@ -11,6 +11,7 @@ profile_report.html
 
 # Distribution / packaging
 .Python
+lap_simulation/fetch/cache/
 build/
 develop-eggs/
 dist/
@@ -164,3 +165,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+*.ff1pkl
+lap_simulation/fetch/f1_cache/fastf1_http_cache.sqlite

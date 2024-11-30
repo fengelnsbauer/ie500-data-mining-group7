@@ -467,44 +467,43 @@ def preprocess_data():
     def remove_lap_time_outliers(df, iqr_multiplier=1.5):
         """
         Remove lap time outliers using IQR method and absolute thresholds.
-        
-        Args:
-            df: DataFrame containing lap times and related features
-            iqr_multiplier: IQR multiplier for outlier threshold (default 1.5)
-        
-        Returns:
-            DataFrame with outliers removed
         """
         df = df.copy()
         print(f"Shape before filtering and outlier removal: {df.shape}")
         
-        # Filter out special laps and obviously slow laps
+        # First pass: Remove obviously invalid lap times
+        df = df[df['milliseconds'].between(60000, 120000)]  # Between 1 min and 2 mins
+        print(f"Shape after removing invalid lap times: {df.shape}")
+        
+        # Filter out special laps
         normal_racing_mask = (
             (df['TrackStatus'] == 1) &      # Normal racing conditions
             (df['is_pit_lap'] == 0) &       # No pit stops
-            (df['lap'] > 1) &               # Exclude first lap
-            (df['milliseconds'] < 120000)    # Exclude laps over 2 minutes
+            (df['lap'] > 1)                 # Exclude first lap
         )
         
         special_laps = df[~normal_racing_mask]
         normal_laps = df[normal_racing_mask]
         
         print(f"Normal racing laps: {normal_laps.shape}")
-        print(f"Special laps (pit stops, safety car, slow laps, etc.): {special_laps.shape}")
+        print(f"Special laps (pit stops, safety car, etc.): {special_laps.shape}")
         
         def remove_outliers_group(group):
+            if len(group) < 4:  # Skip groups with too few samples
+                return group
+                
             Q1 = group['milliseconds'].quantile(0.25)
             Q3 = group['milliseconds'].quantile(0.75)
             IQR = Q3 - Q1
             
-            lower_bound = Q1 - iqr_multiplier * IQR
-            upper_bound = Q3 + iqr_multiplier * IQR
+            lower_bound = max(Q1 - iqr_multiplier * IQR, 60000)  # At least 1 minute
+            upper_bound = min(Q3 + iqr_multiplier * IQR, 120000)  # At most 2 minutes
             
             # Add a circuit-specific minimum time (e.g., median minus 5%)
-            min_time = group['milliseconds'].median() * 0.95
+            min_time = max(group['milliseconds'].median() * 0.95, 60000)
             
             return group[(group['milliseconds'] >= lower_bound) & 
-                        (group['milliseconds'] <= upper_bound) &
+                        (group['milliseconds'] <= upper_bound) & 
                         (group['milliseconds'] >= min_time)]
         
         # Remove outliers only from normal racing laps
@@ -514,7 +513,12 @@ def preprocess_data():
         # Combine cleaned normal laps with special laps
         final_df = pd.concat([cleaned_normal_laps, special_laps], ignore_index=True)
         
+        # Final safety check
+        assert final_df['milliseconds'].max() <= 120000, "Found lap times > 120000ms after cleaning!"
+        assert final_df['milliseconds'].min() >= 60000, "Found lap times < 60000ms after cleaning!"
+        
         print(f"Final shape after outlier removal: {final_df.shape}")
+        print(f"Lap time range: {final_df['milliseconds'].min():.0f} - {final_df['milliseconds'].max():.0f} ms")
         
         return final_df
 
