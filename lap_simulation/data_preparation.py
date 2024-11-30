@@ -222,14 +222,14 @@ def preprocess_data():
     
     # Calculate median lap times for each driver in each session
     session_medians = practice_sessions.groupby(['raceId', 'driverId', 'SessionName'])['LapTime_ms'].median().reset_index()
-    
+
     # Pivot the data to have sessions as columns
     session_medians_pivot = session_medians.pivot_table(
         index=['raceId', 'driverId'],
         columns='SessionName',
         values='LapTime_ms'
     ).reset_index()
-    
+
     # Rename columns for clarity
     session_medians_pivot.rename(columns={
         'FP1': 'fp1_median_time',
@@ -237,26 +237,19 @@ def preprocess_data():
         'FP3': 'fp3_median_time',
         'Q': 'quali_time'
     }, inplace=True)
-    
-    laps = laps.merge(
-    session_medians_pivot,
-    on=['raceId', 'driverId'],
-    how='left'
-    )
-    
-    # Fill missing practice times with global median or a placeholder value
-    global_median_fp1 = laps['fp1_median_time'].median()
-    laps['fp1_median_time'].fillna(global_median_fp1, inplace=True)
-    
-    # Repeat for other sessions
-    global_median_fp2 = laps['fp2_median_time'].median()
-    laps['fp2_median_time'].fillna(global_median_fp2, inplace=True)
-    
-    global_median_fp3 = laps['fp3_median_time'].median()
-    laps['fp3_median_time'].fillna(global_median_fp3, inplace=True)
-    
-    global_median_quali = laps['quali_time'].median()
-    laps['quali_time'].fillna(global_median_quali, inplace=True)
+
+    # Merge session medians with laps
+    laps = laps.merge(session_medians_pivot, on=['raceId', 'driverId'], how='left')
+
+    # For missing session times, fill with global means for that session within the same race
+    for session in ['fp1_median_time', 'fp2_median_time', 'fp3_median_time', 'quali_time']:
+        global_mean_column = f'global_mean_{session}'
+        laps[global_mean_column] = laps.groupby('raceId')[session].transform('mean')  # Calculate global mean for the session
+        laps[session] = laps[session].fillna(laps[global_mean_column])  # Fill missing session times with global means
+        laps.drop(columns=[global_mean_column], inplace=True)  # Remove intermediate column
+
+    # Ensure session times are now part of the driver-specific attributes
+
 
     
     # Create a binary indicator for pit stops
@@ -632,6 +625,35 @@ def preprocess_data():
     # Drop rows with missing values in required columns
     laps = laps[laps['year'] >= 2018]
     laps = laps.dropna(subset=required_columns)
+    # For drivers_df - keep only driver-specific attributes
+    drivers_df = laps.groupby('driverId').agg({
+        'driver_overall_skill': 'last',
+        'driver_circuit_skill': 'last',
+        'driver_consistency': 'last',
+        'driver_reliability': 'last',
+        'driver_aggression': 'last',
+        'driver_risk_taking': 'last',
+        'constructor_performance': 'last'  # Most recent constructor performance
+    }).reset_index()
+
+    # Save the driver-specific attributes
+    drivers_df.to_csv('data/util/drivers_attributes.csv', index=False)
+
+    # For race_attributes_df - aggregate race-specific attributes
+    race_attributes_df = laps.groupby('raceId').agg({
+        'circuitId': 'first',
+        'track_temp': 'mean',
+        'air_temp': 'mean',
+        'humidity': 'mean',
+        'fp1_median_time': 'mean',
+        'fp2_median_time': 'mean',
+        'fp3_median_time': 'mean',
+        'quali_time': 'mean'
+    }).reset_index()
+
+    # Save the race-specific attributes
+    race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
+
 
     laps.drop(columns=['raceId_x', 'year_y', 'Time', 'AirTemp', 'Humidity', 'Pressure', 'Rainfall', 'TrackTemp', 'WindDirection', 'WindSpeed',
                         'Year', 'year_x', 'EventName', 'SessionName', 'EventName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
