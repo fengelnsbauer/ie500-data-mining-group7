@@ -29,6 +29,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+poetry.toml
+poetry.locl
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -167,3 +169,8 @@ cython_debug/
 
 *.ff1pkl
 lap_simulation/fetch/f1_cache/fastf1_http_cache.sqlite
+*.joblib
+*.sqlite
+*.joblib
+*.joblib
+src/fetch/cache/fastf1_http_cache.sqlite
