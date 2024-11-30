@@ -1,0 +1,17 @@
+{
+    "hyperparameters": {
+        "lr": "0.05",
+        "loss_fn": "<class 'torch.nn.modules.loss.L1Loss'>",
+        "optimizer": "<class 'torch.optim.adamw.AdamW'>",
+        "layer_config": "(3, 11)"
+    },
+    "metrics": [
+        {
+            "step": 49,
+            "metrics": {
+                "train_loss": 90435.640625,
+                "epoch": 0.0
+            }
+        }
+    ]
+}
