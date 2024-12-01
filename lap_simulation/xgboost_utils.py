@@ -39,33 +39,101 @@ def save_pipeline(pipeline, path: str):
         logging.error(f"Error saving pipeline to {path}: {e}")
         raise
 
-def create_lap_times_dataframe(race) -> pd.DataFrame:
-    data = {'Lap': []}
-    total_laps = race.total_laps
-    for driver in race.drivers:
-        data[driver.name] = race.lap_data[driver.driver_id]['lap_times']
-    data['Lap'] = list(range(1, total_laps + 1))
-    lap_times_df = pd.DataFrame(data)
-    return lap_times_df
 
-def create_lap_times_with_inputs_dataframe(race, race_features) -> pd.DataFrame:
+def load_model_with_preprocessor(path: str):
+    """
+    Load the XGBoost model and preprocessor from a pickle file.
+
+    Args:
+        path (str): Path to the pickle file.
+
+    Returns:
+        tuple: (model, preprocessor)
+    """
+    try:
+        with open(path, 'rb') as f:
+            data = pickle.load(f)
+        model = data['model']
+        preprocessor = data['preprocessor']
+        logging.info(f"Model and preprocessor loaded from {path}")
+        return model, preprocessor
+    except Exception as e:
+        logging.error(f"Error loading model and preprocessor from {path}: {e}")
+        raise
+
+def save_model_with_preprocessor(model, preprocessor, path: str):
+    """
+    Save the model and preprocessor to a pickle file.
+
+    Args:
+        model: Trained XGBoost model.
+        preprocessor: Preprocessing pipeline.
+        path (str): Path to save the pickle file.
+    """
+    try:
+        with open(path, 'wb') as f:
+            pickle.dump({'model': model, 'preprocessor': preprocessor}, f)
+        logging.info(f"Model and preprocessor saved to {path}")
+    except Exception as e:
+        logging.error(f"Error saving model and preprocessor to {path}: {e}")
+        raise
+
+def create_lap_times_with_inputs_dataframe(race) -> pd.DataFrame:
     records = []
     for driver in race.drivers:
         lap_times = race.lap_data[driver.driver_id]['lap_times']
         positions = race.lap_data[driver.driver_id]['positions']
         inputs_list = race.lap_data[driver.driver_id]['inputs']
+        
         for lap_index, (lap_time, position, inputs) in enumerate(zip(lap_times, positions, inputs_list)):
+            # Create base record with lap info
             record = {
                 'Lap': lap_index + 1,
                 'Driver': driver.name,
                 'LapTime': lap_time,
                 'Position': position,
             }
-            # Flatten static and dynamic features
-            for i, feature_name in enumerate(race_features.static_features):
-                record[feature_name] = inputs['static_features'][i]
+            
+            # Add all static features
+            for feature_name, value in inputs['static_features'].items():
+                record[f'static_{feature_name}'] = value
+                
+            # Add all dynamic features
             for feature_name, value in inputs['dynamic_features'].items():
-                record[feature_name] = value
+                record[f'dynamic_{feature_name}'] = value
+                
             records.append(record)
+            
+    # Create DataFrame and sort by lap and position
     lap_times_df = pd.DataFrame(records)
+    lap_times_df = lap_times_df.sort_values(['Lap', 'Position'])
+    
     return lap_times_df
+
+# Example usage:
+def analyze_race_results(race):
+    # Create detailed DataFrame
+    df = create_lap_times_with_inputs_dataframe(race)
+    
+    # Print summary statistics
+    print("\nRace Analysis:")
+    print(f"Total Laps: {df['Lap'].max()}")
+    print(f"Number of Drivers: {len(race.drivers)}")
+    
+    # Best lap times
+    best_laps = df.groupby('Driver')['LapTime'].agg(['min', 'mean', 'max']).round(2)
+    best_laps.columns = ['Best Lap', 'Average Lap', 'Worst Lap']
+    print("\nLap Time Analysis:")
+    print(best_laps)
+    
+    # Tire compound usage
+    tire_usage = df.groupby(['Driver', 'dynamic_tire_compound']).size().unstack(fill_value=0)
+    print("\nTire Compound Usage (laps per compound):")
+    print(tire_usage)
+    
+    # Save detailed lap times to CSV
+    output_path = f'results/race_{race.race_id}_detailed.csv'
+    df.to_csv(output_path, index=False)
+    print(f"\nDetailed lap times saved to {output_path}")
+    
+    return df
