@@ -126,14 +126,6 @@ class RaceSimulator:
         if self.is_pit_lap(driver, lap):
             lap_time += self.pit_stop_duration  # Add pit stop duration
         
-        # Apply tire degradation
-        compound = driver.dynamic_features.get('tire_compound', 1)
-        tire_age = driver.dynamic_features.get('tire_age', 0)
-        if compound in self.tire_compound_effects:
-            effect = self.tire_compound_effects[compound]
-            lap_time *= effect['base_speed']
-            lap_time += effect['degradation_per_lap'] * tire_age
-        
         return lap_time
     
     def is_safety_car(self, lap: int, race: 'Race') -> bool:

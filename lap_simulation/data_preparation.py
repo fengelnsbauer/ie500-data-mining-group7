@@ -701,14 +701,14 @@ def preprocess_data():
         cleaned_normal_laps.reset_index(drop=True, inplace=True)
         
         # Combine cleaned normal laps with special laps
-        final_df = pd.concat([cleaned_normal_laps, special_laps], ignore_index=True)
+        special = pd.concat([cleaned_normal_laps, special_laps], ignore_index=True)
         
-        print(f"Final shape after outlier removal: {final_df.shape}")
+        print(f"Final shape after outlier removal: {special.shape}")
         
-        return cleaned_normal_laps
+        return cleaned_normal_laps, special
 
     # Apply outlier removal
-    laps = remove_lap_time_outliers(laps)
+    laps, special_laps = remove_lap_time_outliers(laps)
     
     # Update required columns
     race_features = RaceFeatures()
@@ -766,7 +766,9 @@ def preprocess_data():
 
     race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
 
-    laps.to_csv('data//LAPS.csv', index=False)
+    special_laps.to_csv('data/SPECIAL_LAPS.csv', index=False)
+
+    laps.to_csv('data/LAPS.csv', index=False)
 
     # Return the preprocessed DataFrame
     return laps
