@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Dict
+from typing import Dict, List, Tuple
 
 def extract_pit_strategies(lap_times_df: pd.DataFrame, race_id: int) -> Dict[int, Dict]:
     """
@@ -52,3 +52,45 @@ def extract_pit_strategies(lap_times_df: pd.DataFrame, race_id: int) -> Dict[int
         }
     
     return pit_strategies
+
+# Extract safety car periods using the updated function
+def extract_safety_car_periods(lap_times_df: pd.DataFrame, race_id: int) -> List[Tuple[int, int]]:
+    """
+    Extracts safety car periods for a given race based on TrackStatus.
+
+    Args:
+        lap_times_df (pd.DataFrame): DataFrame containing lap data.
+        race_id (int): Identifier for the race.
+
+    Returns:
+        List[Tuple[int, int]]: A list of (start_lap, end_lap) tuples indicating safety car periods.
+    """
+    safety_car_periods = []
+    
+    # Filter data for the specific race
+    race_df = lap_times_df[lap_times_df['raceId'] == race_id].sort_values('lap')
+    
+    # Identify all laps with safety car (TrackStatus == 4)
+    safety_car_laps = race_df[race_df['TrackStatus'] == 4]['lap'].tolist()
+    
+    if not safety_car_laps:
+        return safety_car_periods  # No safety car periods in this race
+    
+    # Initialize the first period
+    start_lap = safety_car_laps[0]
+    end_lap = safety_car_laps[0]
+    
+    for lap in safety_car_laps[1:]:
+        if lap == end_lap + 1:
+            # Consecutive lap, extend the current period
+            end_lap = lap
+        else:
+            # Non-consecutive lap, finalize the current period and start a new one
+            safety_car_periods.append((start_lap, end_lap))
+            start_lap = lap
+            end_lap = lap
+    
+    # Append the last period
+    safety_car_periods.append((start_lap, end_lap))
+    
+    return safety_car_periods

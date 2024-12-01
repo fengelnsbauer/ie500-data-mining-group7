@@ -260,31 +260,42 @@ class RaceSimulator:
         return race.lap_data
 
 # Visualization functions remain unchanged
-def plot_race_positions(race: Race):
+def plot_race_positions(race, constructor_mapping, driver_code_mapping, TEAM_COLORS):
     """
-    Plots the positions of drivers over the course of the race.
+    Plots the positions of drivers over the course of the race with constructor-specific colors
+    and driver codes as labels.
 
     Args:
         race (Race): The race instance.
+        constructor_mapping (dict): Mapping from constructorId to constructor name.
+        driver_code_mapping (dict): Mapping from driverId to driver code.
+        TEAM_COLORS (dict): Mapping from constructor name to color.
     """
     plt.figure(figsize=(12, 6))
     
     for driver in race.drivers:
-        positions = race.lap_data[driver.driver_id]['positions']
-        plt.plot(range(1, len(positions) + 1), positions, label=driver.name)
+        driver_id = driver.driver_id
+        positions = race.lap_data[driver_id]['positions']
+        constructor_id = driver.constructorId
+        color = get_constructor_color(constructor_id)
+        driver_code = driver_code_mapping.get(driver_id, 'UNK')  # 'UNK' for unknown
+        
+        plt.plot(range(1, len(positions) + 1), positions, label=driver_code, color=color)
     
     plt.gca().invert_yaxis()  # Position 1 at top
     plt.xlabel('Lap')
     plt.ylabel('Position')
     plt.title('Race Simulation: Driver Positions Over Laps')
-    plt.legend()
+    plt.legend(title='Driver Codes', bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True)
     
     # Shade safety car periods
     for start, end in race.safety_car_periods:
         plt.axvspan(start, end, color='yellow', alpha=0.3)
     
+    plt.tight_layout()
     plt.show()
+
 
 def plot_lap_times(race: Race):
     """

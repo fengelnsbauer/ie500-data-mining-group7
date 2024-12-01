@@ -676,7 +676,7 @@ def preprocess_data():
             (df['TrackStatus'] == 1) &      # Normal racing conditions
             (df['is_pit_lap'] == 0) &       # No pit stops
             #(df['lap'] > 1) &
-            (df['milliseconds'] < 120000)   # Exclude first lap
+            (df['milliseconds'] < 150000)   # Exclude first lap
         )
         
         special_laps = df[~normal_racing_mask]
@@ -722,6 +722,7 @@ def preprocess_data():
     laps = laps.dropna(subset=required_columns)
 
     # Create driver-specific attributes per race
+    # Create driver-specific attributes per race, including constructorId
     drivers_df = laps.groupby(['driverId', 'raceId']).agg({
         'driver_overall_skill': 'last',
         'driver_circuit_skill': 'last',
@@ -730,11 +731,17 @@ def preprocess_data():
         'driver_aggression': 'last',
         'driver_risk_taking': 'last',
         'constructor_performance': 'last',  # Most recent constructor performance
-        'fp1_median_time': 'last',  # Include session times
+        'fp1_median_time': 'last',          # Include session times
         'fp2_median_time': 'last',
         'fp3_median_time': 'last',
         'quali_time': 'last',
+        'constructorId': 'last',
+        'code': 'last'
     }).reset_index()
+
+    # Preview the updated DataFrame
+    drivers_df.head()
+
 
     # Save the driver-specific attributes
     drivers_df.to_csv('data/util/drivers_attributes.csv', index=False)
