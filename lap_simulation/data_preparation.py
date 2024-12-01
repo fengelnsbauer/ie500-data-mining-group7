@@ -79,6 +79,8 @@ def preprocess_data():
     laps['pitstop_milliseconds'].fillna(0, inplace=True)  # Assuming 0 if no pit stop
     print(laps.shape)
 
+    laps = laps[laps['year'] >= 2018]
+
     # Load additional data
     constructors = pd.read_csv('../data/raw_data/constructors.csv', na_values=na_values)
     constructor_results = pd.read_csv('../data/raw_data/constructor_results.csv', na_values=na_values)
@@ -141,8 +143,36 @@ def preprocess_data():
     
     # Use 'Time' in weather_data as 'seconds_from_start'
     weather_data['seconds_from_start'] = weather_data['Time']
+    # Add weather information
+    # Filter weather data to include only the Race session and process timestamps first
+    weather_data = weather_data[weather_data['SessionName'] == 'R'].copy()  # Make a copy to avoid SettingWithCopyWarning
 
-    
+    # Process the Time column to get seconds from start
+    weather_data['seconds_from_start'] = weather_data['Time'].astype(str).str.strip()
+    weather_data['seconds_from_start'] = pd.to_timedelta(weather_data['seconds_from_start'], errors='coerce')
+    weather_data['seconds_from_start'] = weather_data['seconds_from_start'].dt.total_seconds()
+
+    # Clean up weather_data before merging with races
+    weather_cols_to_keep = ['Time', 'AirTemp', 'Humidity', 'TrackTemp', 'EventName', 'Year', 'SessionName', 'seconds_from_start']
+    weather_data = weather_data[weather_cols_to_keep]
+
+    # Merge with races to get raceId
+    weather_data = weather_data.merge(
+        races[['raceId', 'year', 'name']], 
+        left_on=['EventName', 'Year'],
+        right_on=['name', 'year'],
+        how='left'
+    )
+
+    # Clean up columns after merge
+    final_cols = [
+        'Time', 'AirTemp', 'Humidity', 'TrackTemp',
+        'raceId', 'SessionName', 'seconds_from_start', 'EventName', 'Year'  # Added seconds_from_start to keep
+    ]
+
+    cols_to_drop = [col for col in weather_data.columns 
+                    if col not in final_cols and col in weather_data.columns]
+    weather_data = weather_data.drop(cols_to_drop, axis=1)
     
     # Standardize text data
     tire_data['Compound'] = tire_data['Compound'].str.upper()
@@ -272,24 +302,25 @@ def preprocess_data():
     
     # Define a function to match weather data to laps
     def match_weather_to_lap(race_laps, race_weather):
-        """
-        For each lap, find the closest weather measurement in time
-        """
         try:
-            # Convert seconds_from_start to float64 in both DataFrames
+            # Copy DataFrames to avoid modifying originals
             race_laps = race_laps.copy()
             race_weather = race_weather.copy()
             
+            # Convert 'seconds_from_start' to numeric
             race_laps['seconds_from_start'] = pd.to_numeric(race_laps['seconds_from_start'], errors='coerce')
             race_weather['seconds_from_start'] = pd.to_numeric(race_weather['seconds_from_start'], errors='coerce')
             
-            # Drop any rows where conversion failed (resulted in NaN)
-            race_laps = race_laps.dropna(subset=['seconds_from_start'])
-            race_weather = race_weather.dropna(subset=['seconds_from_start'])
+            # Drop rows with NaN in 'seconds_from_start'
+            race_laps.dropna(subset=['seconds_from_start'], inplace=True)
+            race_weather.dropna(subset=['seconds_from_start'], inplace=True)
             
-            # Sort both DataFrames by seconds_from_start
-            race_laps = race_laps.sort_values('seconds_from_start')
-            race_weather = race_weather.sort_values('seconds_from_start')
+            # **Select only necessary columns from race_weather**
+            race_weather = race_weather[['seconds_from_start', 'TrackTemp', 'AirTemp', 'Humidity']]
+            
+            # Sort DataFrames by 'seconds_from_start'
+            race_laps.sort_values('seconds_from_start', inplace=True)
+            race_weather.sort_values('seconds_from_start', inplace=True)
             
             # Perform the asof merge
             merged = pd.merge_asof(
@@ -298,6 +329,9 @@ def preprocess_data():
                 on='seconds_from_start',
                 direction='nearest'
             )
+
+            # Debugging output
+            print(merged[['seconds_from_start', 'TrackTemp', 'AirTemp', 'Humidity']].head())
             
             if merged.empty:
                 print("Warning: Merged result is empty. Check if there is overlapping time data.")
@@ -312,29 +346,75 @@ def preprocess_data():
             print("\nSample of race_weather seconds_from_start:", race_weather['seconds_from_start'].head())
             raise
 
-    # Apply matching per race
-    matched_laps_list = []
-    for race_id in laps['raceId'].unique():
-        print(f'Matching for {race_id}')
-        race_laps = laps[laps['raceId'] == race_id]
-        race_weather = weather_data[weather_data['raceId'] == race_id]
-        
-        if not race_weather.empty:
-            matched = match_weather_to_lap(race_laps, race_weather)
-            print(f"Matched DataFrame shape: {matched.shape}")
-            matched_laps_list.append(matched)
-        else:
-            matched_laps_list.append(race_laps)  # No weather data for this race
 
-    # Concatenate all matched laps
-    laps = pd.concat(matched_laps_list, ignore_index=True)
-    print(laps.shape)
-    
-    # Fill missing weather data with default values
-    laps['track_temp'] = laps['TrackTemp'].fillna(25.0)
-    laps['air_temp'] = laps['AirTemp'].fillna(20.0)
-    laps['humidity'] = laps['Humidity'].fillna(50.0)
-    
+    def match_weather_to_laps(laps, races, weather_data):
+        # Initialize list to store merged laps data
+        merged_laps_list = []
+
+        for race_id in laps['raceId'].unique():
+            race_laps = laps[laps['raceId'] == race_id].copy()
+            race_info = races[races['raceId'] == race_id][['year', 'name']].iloc[0]
+            race_year = race_info['year']
+            race_name = race_info['name']
+            race_weather = weather_data[weather_data['raceId'] == race_id]
+
+            print(f"\nProcessing race {race_id} ({race_year} {race_name})")
+
+            if not race_weather.empty:
+                try:
+                    # Perform the matching
+                    merged = match_weather_to_lap(race_laps, race_weather)
+                    print(f"Successfully matched weather data - Found {len(race_weather)} weather records")
+                    merged_laps_list.append(merged)
+                except Exception as e:
+                    print(f"Error matching weather data for race {race_id}: {str(e)}")
+                    # If there's an error, append race_laps without weather data
+                    merged_laps_list.append(race_laps)
+            else:
+                print(f"No weather data found for race - Assigning default weather values")
+                # Assign default weather values to race_laps
+                race_laps['TrackTemp'] = 25.0
+                race_laps['AirTemp'] = 20.0
+                race_laps['Humidity'] = 50.0
+                merged_laps_list.append(race_laps)
+
+        # Concatenate all race laps back into a single DataFrame
+        laps_with_weather = pd.concat(merged_laps_list, ignore_index=True)
+
+        # Fill any remaining missing weather data with defaults
+        laps_with_weather['TrackTemp'].fillna(25.0, inplace=True)
+        laps_with_weather['AirTemp'].fillna(20.0, inplace=True)
+        laps_with_weather['Humidity'].fillna(50.0, inplace=True)
+
+        print("Columns in laps DataFrame:", laps_with_weather.columns.tolist())
+        print("Sample data after merging weather data:")
+        print(laps_with_weather[['raceId', 'lap', 'TrackTemp', 'AirTemp', 'Humidity']].head())
+
+
+        # **Drop any duplicated columns resulting from the merge**
+        # For example, if 'lap' appears as 'lap_x' and 'lap_y'
+        columns_to_drop = [col for col in laps_with_weather.columns if col.endswith('_x') or col.endswith('_y')]
+        laps_with_weather.drop(columns=columns_to_drop, inplace=True, errors='ignore')
+
+        print("Final weather columns added and cleaned:")
+        print(laps_with_weather[['raceId', 'lap', 'TrackTemp', 'AirTemp', 'Humidity']].head())
+
+        return laps_with_weather
+
+
+    print(f"Shape of laps before merging weather data: {laps.shape}")
+    laps = match_weather_to_laps(laps, races, weather_data)
+    print(f"Shape of laps after merging weather data: {laps.shape}")
+
+    # Check for duplicates after merging weather data
+    duplicates = laps[laps.duplicated()]
+    if not duplicates.empty:
+        print(f"Warning: {len(duplicates)} duplicate rows found after merging weather data.")
+        print("Sample of duplicate rows:")
+        print(duplicates.head())
+    else:
+        print("No duplicate rows found after merging weather data.")
+
     # Calculate driver aggression and skill
     # Create driver names
     drivers['driver_name'] = drivers['forename'] + ' ' + drivers['surname']
@@ -576,6 +656,7 @@ def preprocess_data():
     
     laps['TrackStatus'].fillna(1, inplace=True)  # 1 = regular racing status
 
+    # Continue with outlier removal and other preprocessing steps
     def remove_lap_time_outliers(df, iqr_multiplier=1.5):
         """
         Remove lap time outliers using IQR method, considering only normal racing laps.
@@ -594,8 +675,8 @@ def preprocess_data():
         normal_racing_mask = (
             (df['TrackStatus'] == 1) &      # Normal racing conditions
             (df['is_pit_lap'] == 0) &       # No pit stops
-            (df['lap'] > 1) &
-            (df['milliseconds'] < 120000)              # Exclude first lap
+            #(df['lap'] > 1) &
+            (df['milliseconds'] < 120000)   # Exclude first lap
         )
         
         special_laps = df[~normal_racing_mask]
@@ -622,16 +703,16 @@ def preprocess_data():
         # Combine cleaned normal laps with special laps
         final_df = pd.concat([cleaned_normal_laps, special_laps], ignore_index=True)
         
-        print(f"Final shape after outlier removal: {cleaned_normal_laps.shape}")
+        print(f"Final shape after outlier removal: {final_df.shape}")
         
         return cleaned_normal_laps
 
-    # Usage example:
+    # Apply outlier removal
     laps = remove_lap_time_outliers(laps)
     
     # Update required columns
+    race_features = RaceFeatures()
     required_columns = race_features.static_features + race_features.dynamic_features
-    # Ensure all required columns are present in laps
     missing_columns = set(required_columns) - set(laps.columns)
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
@@ -652,35 +733,41 @@ def preprocess_data():
         'fp1_median_time': 'last',  # Include session times
         'fp2_median_time': 'last',
         'fp3_median_time': 'last',
-        'quali_time': 'last'
+        'quali_time': 'last',
     }).reset_index()
 
     # Save the driver-specific attributes
     drivers_df.to_csv('data/util/drivers_attributes.csv', index=False)
 
-
     # For race_attributes_df - aggregate race-specific attributes
     race_attributes_df = laps.groupby('raceId').agg({
         'circuitId': 'first',
-        'track_temp': 'mean',
-        'air_temp': 'mean',
-        'humidity': 'mean'
+        'TrackTemp': 'mean',
+        'AirTemp': 'mean',
+        'Humidity': 'mean'
     }).reset_index()
 
     # Save the race-specific attributes
     race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
 
-    laps.drop(columns=['raceId_x', 'year_y', 'Time', 'AirTemp', 'Humidity', 'Pressure', 'Rainfall', 'TrackTemp', 'WindDirection', 'WindSpeed',
-                        'Year', 'year_x', 'EventName', 'SessionName', 'EventName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
-                        'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 'R', 'S', 'EventFormat',
-                        'quali_date', 'quali_date_time', 'sprint_date', 'sprint_time', 'url_y', 'fastestLap'], inplace=True)
+    # Drop unnecessary columns
+    columns_to_drop = [
+        'raceId_x', 'year_y', 'Time', 'Pressure', 'Rainfall', 'WindDirection', 'WindSpeed', 'Year', 'year_x', 'EventName', 
+        'SessionName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
+        'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 
+        'R', 'S', 'EventFormat', 'quali_date', 'quali_date_time', 'sprint_date', 
+        'sprint_time', 'url_y', 'fastestLap'
+    ]
+    laps = laps.drop(columns=columns_to_drop, axis=1, errors='ignore')
 
+    # Final race_attributes_df
     race_attributes_df = laps[['raceId', 'circuitId', 'fp1_median_time', 'fp2_median_time',
-                           'fp3_median_time', 'quali_time', 'track_temp', 'air_temp', 'humidity']].drop_duplicates()
+                               'fp3_median_time', 'quali_time', 'TrackTemp', 'AirTemp', 'Humidity']].drop_duplicates()
 
     race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
 
-    
+    laps.to_csv('data//LAPS.csv', index=False)
+
     # Return the preprocessed DataFrame
     return laps
 
@@ -716,8 +803,8 @@ def prepare_regression_data(df):
         'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',
         'driver_reliability', 'driver_aggression', 'driver_risk_taking',
         'fp1_median_time', 'fp2_median_time', 'fp3_median_time', 'quali_time',
-        'tire_age', 'fuel_load', 'track_position', 'track_temp',
-        'air_temp', 'humidity', 'tire_compound', 'TrackStatus', 'is_pit_lap'
+        'tire_age', 'fuel_load', 'track_position', 'TrackTemp',
+        'AirTemp', 'Humidity', 'tire_compound', 'TrackStatus', 'is_pit_lap'
     ]]
     y = df['milliseconds']
     return X, y

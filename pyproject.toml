@@ -29,6 +29,7 @@ tensorflow = "^2.18.0"
 lightgbm = "^4.5.0"
 optuna = "^4.1.0"
 flaml = {extras = ["automl"], version = "^2.3.2"}
+optuna-integration = "^4.1.0"
 
 
 [build-system]

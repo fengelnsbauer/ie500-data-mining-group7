@@ -192,55 +192,89 @@ class RaceSimulator:
 
 
     def simulate_race(self, race: Race):
-        """
-        Simulate the race lap by lap for all drivers.
-        """
-        # Initialize lap data storage
-        for driver in race.drivers:
-            race.lap_data[driver.driver_id] = {
-                'lap_times': [],
-                'positions': [],
-                'inputs': []  # To store input features
-            }
-            # Initialize driver sequence with zeros or previous data
-            driver.sequence = self.initialize_sequence(driver)
-        
-        # Simulate each lap
-        for lap in range(1, race.total_laps + 1):
-            lap_times = {}
-            # Simulate lap for each driver
-            for driver in race.drivers:
-                # Update driver's dynamic features
-                self.update_dynamic_features(driver, lap, race)
+        race_length = race.total_laps
+        race_lap_data = []
 
-                # Prepare input features for storage
-                input_features = {
+        for lap in range(1, race_length + 1):
+            lap_data = []
+            for driver in race.drivers:
+                # Prepare input data for prediction
+                if self.model_type == 'lstm':
+                    # Use the existing LSTM prediction code
+                    sequence_tensor = torch.FloatTensor(driver.sequence).unsqueeze(0)
+                    static_tensor = torch.FloatTensor(driver.static_features).unsqueeze(0)
+                    predictions = self.model(sequence_tensor, static_tensor)
+                    lap_time_pred = self.preprocessor.inverse_transform_lap_times(predictions.cpu().numpy())[0]
+                else:
+                    # Prepare input data for other model types
+                    input_data = np.concatenate((driver.sequence.flatten(), driver.static_features))
+                    input_data = input_data.reshape(1, -1)  # Reshape to 2D array
+
+                    if self.model_type == 'linear_regression':
+                        # Prepare input data for linear regression
+                        sequence_flattened = driver.sequence.flatten()
+                        static_features = driver.static_features
+                        
+                        # Select only the features used during training
+                        selected_features = [...]  # List the feature names used for training the linear regression model
+                        
+                        # Create a DataFrame with the selected features
+                        input_data = pd.DataFrame({feature: [value] for feature, value in zip(selected_features, np.concatenate((sequence_flattened, static_features)))})
+                        
+                        # Apply one-hot encoding to categorical features
+                        input_data = pd.get_dummies(input_data, columns=[...])  # Specify the categorical feature names
+                        
+                        # Ensure the input data has the same features as the training data
+                        missing_cols = set(X.columns) - set(input_data.columns)
+                        for col in missing_cols:
+                            input_data[col] = 0
+                        input_data = input_data[X.columns]
+                        
+                        # Scale the input data using the same scaler used during training
+                        input_data_scaled = scaler.transform(input_data)
+                        
+                        # Apply PCA transformation
+                        input_data_pca = pca.transform(input_data_scaled)
+                        
+                        # Make predictions using the linear regression model
+                        lap_time_pred = self.model.predict(input_data_pca)[0]
+                    elif self.model_type == 'xgboost':
+                        # XGBoost can handle raw input data
+                        lap_time_pred = self.model.predict(input_data)[0]
+                    elif self.model_type == 'random_forest':
+                        # Random forest can handle raw input data
+                        lap_time_pred = self.model.predict(input_data)[0]
+                    else:
+                        raise ValueError(f"Unsupported model type: {self.model_type}")
+
+                # Update driver's lap time and race state
+                driver.lap_times.append(lap_time_pred)
+                driver.race_state['lap_number'] = lap
+                driver.race_state['lap_time'] = lap_time_pred
+
+                # Collect lap data for the driver
+                lap_data.append({
+                    'driver': driver.name,
                     'lap': lap,
-                    'driver_id': driver.driver_id,
-                    'driver_name': driver.name,
-                    'static_features': driver.static_features.copy(),
-                    'dynamic_features': driver.dynamic_features.copy(),
-                }
+                    'lap_time': lap_time_pred,
+                    **driver.race_state
+                })
 
-                # Simulate lap time
-                lap_time = self.simulate_driver_lap(driver)
-                lap_times[driver.driver_id] = lap_time
+                # Update driver's sequence for the next lap
+                driver.sequence[:-1] = driver.sequence[1:]
+                driver.sequence[-1] = np.append(lap_time_pred, list(driver.race_state.values()))
 
-                # Update driver's sequence
-                self.update_driver_sequence(driver, lap_time)
+            # Sort drivers based on total elapsed time
+            race.drivers.sort(key=lambda driver: sum(driver.lap_times))
 
-                # Store input features
-                race.lap_data[driver.driver_id]['inputs'].append(input_features)
+            # Update race standings
+            for i, driver in enumerate(race.drivers, start=1):
+                driver.race_state['position'] = i
 
-            # Update positions based on lap times
-            self.update_positions(race, lap_times)
+            # Collect lap data for all drivers
+            race_lap_data.append(lap_data)
 
-            # Record lap times and positions
-            for driver in race.drivers:
-                race.lap_data[driver.driver_id]['lap_times'].append(lap_times[driver.driver_id])
-                race.lap_data[driver.driver_id]['positions'].append(driver.current_position)
-        
-        return race.lap_data
+        return race_lap_data
 
 def plot_race_positions(race):
     plt.figure(figsize=(12, 6))
