@@ -1,3 +1,6 @@
+import pandas as pd
+from typing import Dict
+
 def extract_pit_strategies(lap_times_df: pd.DataFrame, race_id: int) -> Dict[int, Dict]:
     """
     Extracts pit strategies for each driver in a given race.
