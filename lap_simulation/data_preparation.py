@@ -807,6 +807,12 @@ def split_data_by_race(df, test_size=0.2, random_state=42):
     test_df = df.iloc[test_idx]
     return train_df, test_df
 
+def load_data_splits() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Load the saved train/test splits."""
+    train_df = pd.read_csv('data/train/train_data.csv')
+    test_df = pd.read_csv('data/test/test_data.csv')
+    return train_df, test_df
+
 def prepare_regression_data(df):
     X = df[[
         'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',

@@ -1,3 +1,5 @@
+# lstm.py
+
 import pandas as pd
 import numpy as np
 import torch
@@ -6,10 +8,11 @@ from torch.utils.data import DataLoader, Dataset
 from typing import List, Tuple, Dict, Optional
 from sklearn.preprocessing import StandardScaler
 from features import RaceFeatures
+import logging
 
 # Define the F1Dataset class
 class F1Dataset(Dataset):
-    def __init__(self, sequences, static_features, targets):
+    def __init__(self, sequences: np.ndarray, static_features: np.ndarray, targets: np.ndarray):
         self.sequences = torch.FloatTensor(sequences)
         self.static_features = torch.FloatTensor(static_features)
         self.targets = torch.FloatTensor(targets)
@@ -24,6 +27,7 @@ class F1Dataset(Dataset):
             'target': self.targets[idx]
         }
 
+# Define the data preprocessor
 class F1DataPreprocessor:
     def __init__(self):
         self.static_scaler = StandardScaler()
@@ -31,8 +35,8 @@ class F1DataPreprocessor:
         self.lap_time_scaler = StandardScaler()
         self.race_features = RaceFeatures()
         self.static_feature_names = self.race_features.static_features  # Initialize with feature names from RaceFeatures
-
-    def fit_scalers(self, sequences, static_features, targets):
+    
+    def fit_scalers(self, sequences: np.ndarray, static_features: np.ndarray, targets: np.ndarray):
         """
         Fit scalers on training data.
         """
@@ -41,12 +45,12 @@ class F1DataPreprocessor:
         
         # Fit static_scaler on static features
         self.static_scaler.fit(static_features)
-
+    
         # Extract dynamic features (excluding the lap time column)
         dynamic_features_flat = sequences[:, :, 1:].reshape(-1, sequences.shape[2] - 1)
         self.dynamic_scaler.fit(dynamic_features_flat)
-
-    def transform_static_features(self, static_features):
+    
+    def transform_static_features(self, static_features: np.ndarray) -> np.ndarray:
         """
         Transform static features using fitted scaler.
         
@@ -63,31 +67,31 @@ class F1DataPreprocessor:
         if static_features.ndim == 1:
             static_features = static_features.reshape(1, -1)
         return self.static_scaler.transform(static_features)
-
-    def transform_data(self, sequences, static_features, targets):
+    
+    def transform_data(self, sequences: np.ndarray, static_features: np.ndarray, targets: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Transform all data using fitted scalers.
         """
         # Scale targets (lap times)
         targets_scaled = self.lap_time_scaler.transform(targets.reshape(-1, 1)).flatten()
-
+    
         # Scale static features
         static_features_scaled = self.transform_static_features(static_features)
-
+    
         # Scale dynamic features
         dynamic_features_flat = sequences[:, :, 1:].reshape(-1, sequences.shape[2] - 1)
         dynamic_features_scaled = self.dynamic_scaler.transform(dynamic_features_flat)
-
+    
         # Reconstruct sequences with scaled dynamic features
         dynamic_features_scaled = dynamic_features_scaled.reshape(sequences.shape[0], sequences.shape[1], -1)
         sequences_scaled = np.concatenate((
             self.lap_time_scaler.transform(sequences[:, :, 0].reshape(-1, 1)).reshape(sequences.shape[0], sequences.shape[1], 1),
             dynamic_features_scaled
         ), axis=2)
-
+    
         return sequences_scaled, static_features_scaled, targets_scaled
-
-    def inverse_transform_lap_times(self, scaled_lap_times):
+    
+    def inverse_transform_lap_times(self, scaled_lap_times: np.ndarray) -> np.ndarray:
         """
         Convert scaled lap times back to original scale.
         """
@@ -95,10 +99,9 @@ class F1DataPreprocessor:
             scaled_lap_times = scaled_lap_times.reshape(-1, 1)
         return self.lap_time_scaler.inverse_transform(scaled_lap_times).flatten()
 
-
-
+# Define the LSTM-based prediction model
 class F1PredictionModel(nn.Module):
-    def __init__(self, sequence_dim, static_dim, hidden_dim=64, num_layers=2, dropout_prob=0.2):
+    def __init__(self, sequence_dim: int, static_dim: int, hidden_dim: int = 64, num_layers: int = 2, dropout_prob: float = 0.2):
         super().__init__()
         
         self.lstm = nn.LSTM(
@@ -128,24 +131,47 @@ class F1PredictionModel(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
 
-    def forward(self, sequence, static):
+    def forward(self, sequence: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the model.
+
+        Args:
+            sequence (torch.Tensor): Sequence input of shape (batch_size, window_size, sequence_dim).
+            static (torch.Tensor): Static features input of shape (batch_size, static_dim).
+
+        Returns:
+            torch.Tensor: Predicted lap time.
+        """
         lstm_out, _ = self.lstm(sequence)
-        lstm_out = lstm_out[:, -1, :]
+        lstm_out = lstm_out[:, -1, :]  # Take the output of the last time step
         static_out = self.static_network(static)
         combined = torch.cat([lstm_out, static_out], dim=1)
         prediction = self.final_network(combined)
         return prediction.squeeze()
 
-
 # Define the training function
 def train_model(model: nn.Module, 
                 train_loader: DataLoader,
                 val_loader: DataLoader,
-                epochs: int = 10,
+                epochs: int = 50,
                 learning_rate: float = 0.001,
-                patience: int = 5,      # Added for early stopping
+                patience: int = 10,      # Added for early stopping
                 device: Optional[str] = None) -> Dict[str, List[float]]:
-    
+    """
+    Trains the LSTM model.
+
+    Args:
+        model (nn.Module): The LSTM model.
+        train_loader (DataLoader): DataLoader for training data.
+        val_loader (DataLoader): DataLoader for validation data.
+        epochs (int, optional): Number of training epochs. Defaults to 50.
+        learning_rate (float, optional): Learning rate for the optimizer. Defaults to 0.001.
+        patience (int, optional): Patience for early stopping. Defaults to 10.
+        device (str, optional): Device to train on ('cuda' or 'cpu'). Defaults to None.
+
+    Returns:
+        Dict[str, List[float]]: Dictionary containing training and validation loss history.
+    """
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device)
@@ -174,7 +200,7 @@ def train_model(model: nn.Module,
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_losses.append(loss.item())
-    
+
         # Validation
         model.eval()
         val_losses = []
@@ -198,26 +224,37 @@ def train_model(model: nn.Module,
         print(f'Epoch {epoch+1}/{epochs}:')
         print(f'Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
 
+        # Early stopping check
         if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                patience_counter = 0
+            best_val_loss = val_loss
+            patience_counter = 0
+            # Save the best model
+            torch.save(model.state_dict(), 'models/best_lstm_model.pth')
+            logging.info(f"Best model saved at epoch {epoch+1} with validation loss {val_loss:.6f}")
         else:
-                patience_counter += 1
-                
-        if patience_counter >= patience:
+            patience_counter += 1
+            if patience_counter >= patience:
                 print(f'Early stopping triggered at epoch {epoch+1}')
                 break
-        
+
     return history
 
-def save_model_with_preprocessor(model, preprocessor, sequence_dim, static_dim, path: str):
+# Define utility functions to save and load the model with preprocessor
+def save_model_with_preprocessor(model: nn.Module, preprocessor: F1DataPreprocessor, path: str):
+    """
+    Saves the model and preprocessor to a file.
+
+    Args:
+        model (nn.Module): The trained model.
+        preprocessor (F1DataPreprocessor): The data preprocessor with fitted scalers.
+        path (str): File path to save the model and preprocessor.
+    """
     model.eval()
-    
     torch.save({
         'model_state_dict': model.state_dict(),
         'model_config': {
-            'sequence_dim': sequence_dim,
-            'static_dim': static_dim,
+            'sequence_dim': model.lstm.input_size,
+            'static_dim': model.static_network[0].in_features,
             'hidden_dim': model.lstm.hidden_size,
             'num_layers': model.lstm.num_layers,
             'dropout_prob': model.lstm.dropout
@@ -229,9 +266,18 @@ def save_model_with_preprocessor(model, preprocessor, sequence_dim, static_dim, 
             'static_feature_names': preprocessor.static_feature_names  # Save static feature names
         }
     }, path)
-    print(f"Model and preprocessor saved to {path}")
+    logging.info(f"Model and preprocessor saved to {path}")
 
-def load_model_with_preprocessor(path: str):
+def load_model_with_preprocessor(path: str) -> Tuple[nn.Module, F1DataPreprocessor]:
+    """
+    Loads the model and preprocessor from a file.
+
+    Args:
+        path (str): File path from where to load the model and preprocessor.
+
+    Returns:
+        Tuple[nn.Module, F1DataPreprocessor]: The loaded model and preprocessor.
+    """
     checkpoint = torch.load(path, map_location=torch.device('cpu'))
     
     model = F1PredictionModel(
@@ -251,5 +297,5 @@ def load_model_with_preprocessor(path: str):
     preprocessor.static_scaler = checkpoint['preprocessor_state']['static_scaler']
     preprocessor.static_feature_names = checkpoint['preprocessor_state']['static_feature_names']  # Load static feature names
     
+    logging.info(f"Model and preprocessor loaded from {path}")
     return model, preprocessor
-

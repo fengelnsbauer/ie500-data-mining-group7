@@ -174,3 +174,5 @@ lap_simulation/fetch/f1_cache/fastf1_http_cache.sqlite
 *.sqlite
 *.joblib
 src/fetch/cache/fastf1_http_cache.sqlite
+/lap_simulation/plots
+/lap_simulation/results

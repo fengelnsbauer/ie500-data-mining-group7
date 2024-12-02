@@ -11,15 +11,26 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Define the Race class
 class Race:
-    def __init__(self, race_id, circuit_id, total_laps, weather_conditions, safety_car_periods=None):
+    def __init__(self, race_id: int, circuit_id: int, total_laps: int, 
+                 weather_conditions: Dict[int, Dict[str, float]], 
+                 safety_car_periods: Optional[List[Tuple[int, int]]] = None):
+        """
+        Initializes a Race instance.
+
+        Args:
+            race_id (int): Unique identifier for the race.
+            circuit_id (int): Identifier for the circuit.
+            total_laps (int): Total number of laps in the race.
+            weather_conditions (dict): Mapping of lap number to weather data.
+            safety_car_periods (list of tuples): List of (start_lap, end_lap) tuples indicating safety car periods.
+        """
         self.race_id = race_id
         self.circuit_id = circuit_id
         self.total_laps = total_laps
-        self.weather_conditions = weather_conditions  # Dictionary with lap-wise weather data
-        self.safety_car_periods = safety_car_periods or []  # List of tuples [(start_lap, end_lap), ...]
-        self.drivers = []
-        self.lap_data = {}  # To store lap times and positions for each driver
-
+        self.weather_conditions = weather_conditions  # Dict mapping lap to weather data
+        self.safety_car_periods = safety_car_periods or []  # List of (start_lap, end_lap)
+        self.drivers: List['Driver'] = []
+        self.lap_data: Dict[int, Dict[str, List]] = {}  # driver_id -> lap data
 
 # %%
 class Driver:
