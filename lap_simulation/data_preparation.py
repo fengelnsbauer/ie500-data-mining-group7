@@ -1,30 +1,56 @@
 # data_preparation.py
-# Imports
+
 import pandas as pd
 import numpy as np
-import scipy.stats as stats
+import re
 from typing import Tuple
 from sklearn.model_selection import GroupShuffleSplit
+from thefuzz import process  # For fuzzy matching
+import logging
 
 from features import RaceFeatures
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
 na_values = ['\\N', 'NaN', '']
+
+# Preprocessing function for strings
+def preprocess_string(s):
+    if isinstance(s, str):
+        s = s.lower().strip()
+        s = re.sub(r'\s+', ' ', s)
+        s = re.sub(r'grand prix', 'gp', s)
+        s = re.sub(r'[^\w\s]', '', s)
+        return s
+    return s
+
 # Data preparation functions
 def load_raw_data():
-    lap_times = pd.read_csv('../data/raw_data/lap_times.csv', na_values=na_values)
-    drivers = pd.read_csv('../data/raw_data/drivers.csv', na_values=na_values)
-    races = pd.read_csv('../data/raw_data/races.csv', na_values=na_values)
-    circuits = pd.read_csv('../data/raw_data/circuits.csv', na_values=na_values)
-    pit_stops = pd.read_csv('../data/raw_data/pit_stops.csv', na_values=na_values)
-    pit_stops.rename(columns={'milliseconds': 'pitstop_milliseconds'}, inplace=True)
-    results = pd.read_csv('../data/raw_data/results.csv', na_values=na_values)
-    results.rename(columns={'milliseconds': 'racetime_milliseconds'}, inplace=True)
-    qualifying = pd.read_csv('../data/raw_data/qualifying.csv', na_values=na_values)
-    status = pd.read_csv('../data/raw_data/status.csv', na_values=na_values)
-    weather_data = pd.read_csv('../data/raw_data/ff1_weather.csv', na_values=na_values)
-    practice_sessions = pd.read_csv('../data/raw_data/ff1_laps.csv', na_values=na_values)
-    tire_data = pd.read_csv('../data/raw_data/ff1_laps.csv', na_values=na_values)
-    
+    try:
+        lap_times = pd.read_csv('../data/raw_data/lap_times.csv', na_values=na_values)
+        drivers = pd.read_csv('../data/raw_data/drivers.csv', na_values=na_values)
+        races = pd.read_csv('../data/raw_data/races.csv', na_values=na_values)
+        circuits = pd.read_csv('../data/raw_data/circuits.csv', na_values=na_values)
+        pit_stops = pd.read_csv('../data/raw_data/pit_stops.csv', na_values=na_values)
+        pit_stops.rename(columns={'milliseconds': 'pitstop_milliseconds'}, inplace=True)
+        results = pd.read_csv('../data/raw_data/results.csv', na_values=na_values)
+        results.rename(columns={'milliseconds': 'racetime_milliseconds'}, inplace=True)
+        print(results.columns)
+        qualifying = pd.read_csv('../data/raw_data/qualifying.csv', na_values=na_values)
+        status = pd.read_csv('../data/raw_data/status.csv', na_values=na_values)
+        weather_data = pd.read_csv('../data/raw_data/ff1_weather.csv', na_values=na_values)
+        practice_sessions = pd.read_csv('../data/raw_data/ff1_laps.csv', na_values=na_values)
+        tire_data = pd.read_csv('../data/raw_data/ff1_laps.csv', na_values=na_values)
+        constructors = pd.read_csv('../data/raw_data/constructors.csv', na_values=na_values)
+        constructor_standings = pd.read_csv('../data/raw_data/constructor_standings.csv', na_values=na_values)
+    except FileNotFoundError as e:
+        logging.error(f"File not found: {e.filename}")
+        raise
+    except Exception as e:
+        logging.error(f"An error occurred while loading data: {str(e)}")
+        raise
+
     return {
         'lap_times': lap_times,
         'drivers': drivers,
@@ -36,13 +62,22 @@ def load_raw_data():
         'status': status,
         'weather_data': weather_data,
         'practice_sessions': practice_sessions,
-        'tire_data': tire_data
+        'tire_data': tire_data,
+        'constructors': constructors,
+        'constructor_standings': constructor_standings
     }
 
-def preprocess_data():
+def preprocess_data() -> pd.DataFrame:
+    """
+    Preprocesses raw F1 racing data to prepare it for model training.
+    
+    Returns:
+        pd.DataFrame: The preprocessed DataFrame containing lap data with merged features.
+    """
     # Load raw data
     data = load_raw_data()
 
+    # Extract individual DataFrames
     lap_times = data['lap_times']
     drivers = data['drivers']
     races = data['races']
@@ -54,165 +89,331 @@ def preprocess_data():
     weather_data = data['weather_data']
     practice_sessions = data['practice_sessions']
     tire_data = data['tire_data']
-    
-    # Implement data preprocessing steps 
-    # These include merging dataframes, feature engineering, and handling missing values
+    constructors = data['constructors']
+    constructor_standings = data['constructor_standings']
+
+    # Preprocess data
+    # Preprocess data
+    laps = merge_dataframes(lap_times, drivers, races, circuits, results, status, pit_stops)
+    laps = filter_laps_by_year(laps, start_year=2018)
+    laps = add_constructor_info(laps, constructors, constructor_standings, results)
+    laps = add_circuit_info(laps, circuits)
+
+    # Compute cumulative time from the start of the race for each driver
+    laps.sort_values(['raceId', 'driverId', 'lap'], inplace=True)
+    laps['cumulative_milliseconds'] = laps.groupby(['raceId', 'driverId'])['milliseconds'].cumsum()
+    laps['seconds_from_start'] = laps['cumulative_milliseconds'] / 1000.0
+    laps = add_weather_info(laps, races, weather_data)
+    laps = add_tire_info(laps, tire_data, drivers, races)
+    laps = add_practice_session_info(laps, practice_sessions, drivers, races)
+    laps = add_driver_metrics(laps, drivers, results, lap_times, status, races)
+    laps = add_dynamic_features(laps)
+    laps, special_laps = remove_lap_time_outliers(laps)
+    laps = drop_unnecessary_columns(laps)
+    laps = handle_missing_values(laps)
+    laps = save_auxiliary_data(laps, drivers, races, special_laps)
+
+    return laps
+
+def merge_dataframes(
+    lap_times: pd.DataFrame,
+    drivers: pd.DataFrame,
+    races: pd.DataFrame,
+    circuits: pd.DataFrame,
+    results: pd.DataFrame,
+    status: pd.DataFrame,
+    pit_stops: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Merges the primary DataFrames to form the base laps DataFrame.
+
+    Returns:
+        pd.DataFrame: The merged laps DataFrame.
+    """
     # Convert date columns to datetime
     races['date'] = pd.to_datetime(races['date'])
     results['date'] = results['raceId'].map(races.set_index('raceId')['date'])
     lap_times['date'] = lap_times['raceId'].map(races.set_index('raceId')['date'])
-    
-    # Merge dataframes
+
+    # Merge DataFrames
     laps = lap_times.merge(drivers, on='driverId', how='left')
-    print(laps.shape)
     laps = laps.merge(races, on='raceId', how='left', suffixes=('', '_race'))
     laps.rename(columns={'quali_time' : 'quali_date_time'}, inplace=True)
-    print(laps.shape)
     laps = laps.merge(circuits, on='circuitId', how='left')
-    print(laps.shape)
-    laps = laps.merge(results[['raceId', 'driverId', 'positionOrder', 'grid', 'racetime_milliseconds', 'fastestLap', 'statusId']], on=['raceId', 'driverId'], how='left')
-    print(laps.shape)
-    laps = laps.merge(status, on='statusId', how='left')
-    print(laps.shape)
-    laps = laps.merge(pit_stops[['raceId', 'driverId', 'lap', 'pitstop_milliseconds']], on=['raceId', 'driverId', 'lap'], how='left')
-    print(laps.shape)
-    laps['pitstop_milliseconds'].fillna(0, inplace=True)  # Assuming 0 if no pit stop
-    print(laps.shape)
-
-    laps = laps[laps['year'] >= 2018]
-
-    # Load additional data
-    constructors = pd.read_csv('../data/raw_data/constructors.csv', na_values=na_values)
-    constructor_results = pd.read_csv('../data/raw_data/constructor_results.csv', na_values=na_values)
-    constructor_standings = pd.read_csv('../data/raw_data/constructor_standings.csv', na_values=na_values)
     
-    # Merge constructors with drivers
-    results = results.merge(constructors[['constructorId', 'name', 'nationality']], on='constructorId', how='left')
-    results.rename(columns={'name': 'constructor_name', 'nationality': 'constructor_nationality'}, inplace=True)
+    # **Include 'constructorId' in the merge from results**
+    laps = laps.merge(
+        results[['raceId', 'driverId', 'positionOrder', 'grid', 'fastestLap', 'statusId']],
+        on=['raceId', 'driverId'],
+        how='left'
+    )
     
-    # Map driverId to constructorId
+    laps = laps.merge(status[['statusId', 'status']], on='statusId', how='left')
+    laps = laps.merge(
+        pit_stops[['raceId', 'driverId', 'lap', 'pitstop_milliseconds']],
+        on=['raceId', 'driverId', 'lap'],
+        how='left'
+    )
+    # Fill missing pit stop durations with 0 (no pit stop)
+    laps['pitstop_milliseconds'].fillna(0, inplace=True)
+    return laps
+
+
+def filter_laps_by_year(laps: pd.DataFrame, start_year: int = 2018) -> pd.DataFrame:
+    """
+    Filters laps DataFrame to include data from the specified start year onwards.
+    
+    Returns:
+        pd.DataFrame: The filtered laps DataFrame.
+    """
+    laps = laps[laps['year'] >= start_year]
+    return laps
+
+def add_constructor_info(
+    laps: pd.DataFrame,
+    constructors: pd.DataFrame,
+    constructor_standings: pd.DataFrame,
+    results: pd.DataFrame  # Include 'results' as a parameter
+) -> pd.DataFrame:
+    """
+    Adds constructor information and performance metrics to the laps DataFrame.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame with constructor information.
+    """
+    # Map driverId to constructorId from 'results'
     driver_constructor = results[['raceId', 'driverId', 'constructorId']].drop_duplicates()
-    
-    # Merge driver_constructor into laps
     laps = laps.merge(driver_constructor, on=['raceId', 'driverId'], how='left')
-    
+
+    # Merge constructors with 'laps' to get constructor information
+    constructors_info = constructors[['constructorId', 'name', 'nationality']]
+    constructors_info.rename(columns={'name': 'constructor_name', 'nationality': 'constructor_nationality'}, inplace=True)
+    laps = laps.merge(constructors_info, on='constructorId', how='left')
+
     # Add constructor performance metrics
-    # For simplicity, we'll use the constructor standings position as a performance metric
-    constructor_standings_latest = constructor_standings.sort_values('raceId', ascending=False).drop_duplicates('constructorId')
+    constructor_standings_latest = (
+        constructor_standings.sort_values('raceId', ascending=False)
+        .drop_duplicates('constructorId')
+    )
     constructor_standings_latest = constructor_standings_latest[['constructorId', 'points', 'position']]
-    constructor_standings_latest.rename(columns={'points': 'constructor_points', 'position': 'constructor_position'}, inplace=True)
-    
+    constructor_standings_latest.rename(
+        columns={'points': 'constructor_points', 'position': 'constructor_position'}, inplace=True
+    )
     laps = laps.merge(constructor_standings_latest, on='constructorId', how='left')
-    
+
     # Fill missing constructor performance data
     laps['constructor_points'].fillna(laps['constructor_points'].mean(), inplace=True)
     laps['constructor_position'].fillna(laps['constructor_position'].max(), inplace=True)
-    
+
     # Add constructor performance as a static feature
     laps['constructor_performance'] = laps['constructor_points']
+    return laps
+
+
+def add_circuit_info(laps: pd.DataFrame, circuits: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds circuit characteristics to the laps DataFrame.
     
-    # Add circuit characteristics
-    # For simplicity, let's assume circuit length and type are available in circuits.csv
-    circuits['circuit_length'] = 5.0  # Placeholder value, replace with actual data if available
-    circuits['circuit_type'] = 'Permanent'  # Options could be 'Permanent', 'Street', 'Hybrid'
-    
-    # Merge circuit data into laps
-    laps = laps.merge(circuits[['circuitId', 'circuit_length', 'circuit_type']], on='circuitId', how='left')
-    
-    # Encode circuit_type as a categorical variable
+    Returns:
+        pd.DataFrame: The laps DataFrame with circuit information.
+    """
+    # Assume circuit_length and circuit_type are available
+    circuits['circuit_length'] = 5.0  # Placeholder, replace with actual data
+    circuits['circuit_type'] = 'Permanent'  # Options: 'Permanent', 'Street', 'Hybrid'
+    laps = laps.merge(
+        circuits[['circuitId', 'circuit_length', 'circuit_type']],
+        on='circuitId',
+        how='left'
+    )
+    # Encode circuit_type as categorical
     circuit_type_mapping = {'Permanent': 0, 'Street': 1, 'Hybrid': 2}
     laps['circuit_type_encoded'] = laps['circuit_type'].map(circuit_type_mapping)
-    
-    # Add weather information
-    # Filter weather data to include only the Race session
-    weather_data = weather_data[weather_data['SessionName'] == 'R']
-    
-    # Merge weather data with races to get raceId
-    weather_data = weather_data.merge(
-        races[['raceId', 'year', 'name']], 
-        left_on=['EventName', 'Year'],
-        right_on=['name', 'year'],
-        how='left'
-    )
-    
-    # Compute cumulative time from the start of the race for each driver
-    laps.sort_values(['raceId', 'driverId', 'lap'], inplace=True)
-    laps['cumulative_milliseconds'] = laps.groupby(['raceId', 'driverId'])['milliseconds'].cumsum()
-    laps['seconds_from_start'] = laps['cumulative_milliseconds'] / 1000
-    print(laps.shape)
-    
-    # Use 'Time' in weather_data as 'seconds_from_start'
-    weather_data['seconds_from_start'] = weather_data['Time']
-    # Add weather information
-    # Filter weather data to include only the Race session and process timestamps first
-    weather_data = weather_data[weather_data['SessionName'] == 'R'].copy()  # Make a copy to avoid SettingWithCopyWarning
+    return laps
 
-    # Process the Time column to get seconds from start
-    weather_data['seconds_from_start'] = weather_data['Time'].astype(str).str.strip()
-    weather_data['seconds_from_start'] = pd.to_timedelta(weather_data['seconds_from_start'], errors='coerce')
-    weather_data['seconds_from_start'] = weather_data['seconds_from_start'].dt.total_seconds()
+def add_weather_info(laps: pd.DataFrame, races: pd.DataFrame, weather_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merges weather data with laps data.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame with weather information.
+    """
+    # Process weather data for race sessions
+    weather_data = weather_data[weather_data['SessionName'] == 'R'].copy()
+    weather_data['seconds_from_start'] = pd.to_timedelta(weather_data['Time'], errors='coerce').dt.total_seconds()
 
-    # Clean up weather_data before merging with races
-    weather_cols_to_keep = ['Time', 'AirTemp', 'Humidity', 'TrackTemp', 'EventName', 'Year', 'SessionName', 'seconds_from_start']
-    weather_data = weather_data[weather_cols_to_keep]
+    # Preprocess event names
+    weather_data['EventName_clean'] = weather_data['EventName'].apply(preprocess_string)
+    races['name_clean'] = races['name'].apply(preprocess_string)
 
     # Merge with races to get raceId
     weather_data = weather_data.merge(
-        races[['raceId', 'year', 'name']], 
-        left_on=['EventName', 'Year'],
-        right_on=['name', 'year'],
-        how='left'
+        races[['raceId', 'year', 'name_clean']],
+        left_on=['EventName_clean', 'Year'],
+        right_on=['name_clean', 'year'],
+        how='left',
+        indicator=True
     )
 
-    # Clean up columns after merge
-    final_cols = [
-        'Time', 'AirTemp', 'Humidity', 'TrackTemp',
-        'raceId', 'SessionName', 'seconds_from_start', 'EventName', 'Year'  # Added seconds_from_start to keep
-    ]
+    # Handle unmatched races
+    unmatched_weather = weather_data[weather_data['_merge'] == 'left_only']
+    if not unmatched_weather.empty:
+        logging.warning("Unmatched races in weather data:")
+        logging.warning(unmatched_weather[['EventName', 'Year']].drop_duplicates())
 
-    cols_to_drop = [col for col in weather_data.columns 
-                    if col not in final_cols and col in weather_data.columns]
-    weather_data = weather_data.drop(cols_to_drop, axis=1)
+        # Use fuzzy matching to find possible matches
+        unmatched_event_names = unmatched_weather['EventName_clean'].unique()
+        races_event_names = races['name_clean'].unique()
+        event_name_mapping = {}
+        for event in unmatched_event_names:
+            match, score = process.extractOne(event, races_event_names)
+            if score >= 80:  # Adjust the threshold as needed
+                event_name_mapping[event] = match
+                logging.info(f"Mapping '{event}' to '{match}' with score {score}")
+            else:
+                logging.warning(f"No suitable match found for '{event}'")
+
+        # Apply the mappings
+        for event, match in event_name_mapping.items():
+            weather_data.loc[weather_data['EventName_clean'] == event, 'EventName_clean'] = match
+
+        # Retry the merge after applying mappings
+        weather_data = weather_data.merge(
+            races[['raceId', 'year', 'name_clean']],
+            left_on=['EventName_clean', 'Year'],
+            right_on=['name_clean', 'year'],
+            how='left',
+            indicator=False
+        )
+
+    # Drop unnecessary columns
+    weather_data.drop(['EventName_clean', 'name_clean', '_merge'], axis=1, inplace=True, errors='ignore')
+
+    # Clean up columns
+    weather_cols = ['raceId', 'seconds_from_start', 'TrackTemp', 'AirTemp', 'Humidity']
+    weather_data = weather_data[weather_cols]
+
+    # Match weather data to laps
+    laps = match_weather_to_laps(laps, races, weather_data)
+    return laps
+
+def match_weather_to_laps(laps: pd.DataFrame, races: pd.DataFrame, weather_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Matches weather data to each lap based on time from race start.
     
+    Returns:
+        pd.DataFrame: The laps DataFrame with matched weather data.
+    """
+    merged_laps_list = []
+
+    for race_id in laps['raceId'].unique():
+        race_laps = laps[laps['raceId'] == race_id].copy()
+        race_weather = weather_data[weather_data['raceId'] == race_id]
+
+        if not race_weather.empty:
+            # Convert 'seconds_from_start' to numeric
+            race_laps['seconds_from_start'] = pd.to_numeric(race_laps['seconds_from_start'], errors='coerce')
+            race_weather['seconds_from_start'] = pd.to_numeric(race_weather['seconds_from_start'], errors='coerce')
+            # Drop NaNs
+            race_laps.dropna(subset=['seconds_from_start'], inplace=True)
+            race_weather.dropna(subset=['seconds_from_start'], inplace=True)
+            # Perform asof merge
+            merged = pd.merge_asof(
+                race_laps.sort_values('seconds_from_start'),
+                race_weather.sort_values('seconds_from_start'),
+                on='seconds_from_start',
+                direction='nearest'
+            )
+            merged_laps_list.append(merged)
+        else:
+            # Assign default weather values
+            race_laps['TrackTemp'] = 25.0
+            race_laps['AirTemp'] = 20.0
+            race_laps['Humidity'] = 50.0
+            merged_laps_list.append(race_laps)
+
+    # Concatenate all race laps
+    laps_with_weather = pd.concat(merged_laps_list, ignore_index=True)
+    # Fill any remaining missing weather data
+    laps_with_weather['TrackTemp'].fillna(25.0, inplace=True)
+    laps_with_weather['AirTemp'].fillna(20.0, inplace=True)
+    laps_with_weather['Humidity'].fillna(50.0, inplace=True)
+    return laps_with_weather
+
+def add_tire_info(
+    laps: pd.DataFrame,
+    tire_data: pd.DataFrame,
+    drivers: pd.DataFrame,
+    races: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Adds tire compound and track status information to laps DataFrame.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame with tire information.
+    """
     # Standardize text data
     tire_data['Compound'] = tire_data['Compound'].str.upper()
-    tire_data['EventName'] = tire_data['EventName'].str.strip().str.upper()
-    races['name'] = races['name'].str.strip().str.upper()
-    
-    # Filter for race sessions only
+    tire_data['EventName_clean'] = tire_data['EventName'].apply(preprocess_string)
+    races['name_clean'] = races['name'].apply(preprocess_string)
+    drivers['code'] = drivers['code'].str.strip().str.upper()
+    tire_data['Driver'] = tire_data['Driver'].str.strip().str.upper()
+
+    # Filter for race sessions
     tire_data = tire_data[tire_data['SessionName'] == 'R']
-    
     # Merge with races to get raceId
     tire_data = tire_data.merge(
-        races[['raceId', 'year', 'name']],
-        left_on=['Year', 'EventName'],
-        right_on=['year', 'name'],
-        how='left'
+        races[['raceId', 'year', 'name_clean']],
+        left_on=['Year', 'EventName_clean'],
+        right_on=['year', 'name_clean'],
+        how='left',
+        indicator=True
     )
-    
+
+    # Handle unmatched races
+    unmatched_tire = tire_data[tire_data['_merge'] == 'left_only']
+    if not unmatched_tire.empty:
+        logging.warning("Unmatched races in tire data:")
+        logging.warning(unmatched_tire[['EventName', 'Year']].drop_duplicates())
+
+        # Use fuzzy matching to find possible matches
+        unmatched_event_names = unmatched_tire['EventName_clean'].unique()
+        races_event_names = races['name_clean'].unique()
+        event_name_mapping = {}
+        for event in unmatched_event_names:
+            match, score = process.extractOne(event, races_event_names)
+            if score >= 80:
+                event_name_mapping[event] = match
+                logging.info(f"Mapping '{event}' to '{match}' with score {score}")
+            else:
+                logging.warning(f"No suitable match found for '{event}'")
+
+        # Apply the mappings
+        for event, match in event_name_mapping.items():
+            tire_data.loc[tire_data['EventName_clean'] == event, 'EventName_clean'] = match
+
+        # Retry the merge after applying mappings
+        tire_data = tire_data.merge(
+            races[['raceId', 'year', 'name_clean']],
+            left_on=['Year', 'EventName_clean'],
+            right_on=['year', 'name_clean'],
+            how='left',
+            indicator=False
+        )
+
     # Map driver codes to driverId
-    tire_data['Driver'] = tire_data['Driver'].str.strip().str.upper()
-    drivers['code'] = drivers['code'].str.strip().str.upper()
     driver_code_to_id = drivers.set_index('code')['driverId'].to_dict()
     tire_data['driverId'] = tire_data['Driver'].map(driver_code_to_id)
-    
-    # Rename 'LapNumber' to 'lap' and ensure integer type
+    # Rename and ensure integer type
     tire_data.rename(columns={'LapNumber': 'lap'}, inplace=True)
-    tire_data['lap'] = tire_data['lap'].astype(int)
-    laps['lap'] = laps['lap'].astype(int)
-    
-    # Create compound mapping (ordered from hardest to softest)
+    tire_data['lap'] = tire_data['lap'].astype(int, errors='ignore')
+    laps['lap'] = laps['lap'].astype(int, errors='ignore')
+
+    # Create compound mapping
     compound_mapping = {
-        'UNKNOWN': 0,
-        np.nan: 0,
-        'HARD': 1,
-        'MEDIUM': 2,
-        'SOFT': 3,
-        'SUPERSOFT': 3,    # Treat as "Soft"
-        'ULTRASOFT': 3,    # Treat as "Soft"
-        'HYPERSOFT': 3,    # Treat as "Soft"
-        'INTERMEDIATE': 4,
-        'WET': 5
+        'UNKNOWN': 0, np.nan: 0,
+        'HARD': 1, 'MEDIUM': 2, 'SOFT': 3,
+        'SUPERSOFT': 3, 'ULTRASOFT': 3, 'HYPERSOFT': 3,
+        'INTERMEDIATE': 4, 'WET': 5
     }
     # Merge tire_data with laps
     laps = laps.merge(
@@ -220,509 +421,346 @@ def preprocess_data():
         on=['raceId', 'driverId', 'lap'],
         how='left'
     )
-
-    
-    # Handle missing compounds and apply numeric encoding
+    # Handle missing compounds
     laps['Compound'].fillna('UNKNOWN', inplace=True)
     laps['tire_compound'] = laps['Compound'].map(compound_mapping)
-    
-    # Drop the original Compound column if desired
     laps.drop('Compound', axis=1, inplace=True)
+    return laps
+
+def add_practice_session_info(
+    laps: pd.DataFrame,
+    practice_sessions: pd.DataFrame,
+    drivers: pd.DataFrame,
+    races: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Adds practice session median lap times to the laps DataFrame.
     
+    Returns:
+        pd.DataFrame: The laps DataFrame with practice session information.
+    """
     # Standardize names
-    practice_sessions['EventName'] = practice_sessions['EventName'].str.strip().str.upper()
-    races['name'] = races['name'].str.strip().str.upper()
-    
-    # Merge practice_sessions with races to get raceId
-    practice_sessions = practice_sessions.merge(
-        races[['raceId', 'year', 'name']],
-        left_on=['Year', 'EventName'],
-        right_on=['year', 'name'],
-        how='left'
-    )
-    
-    # Map driver codes to driverId
-    practice_sessions['Driver'] = practice_sessions['Driver'].str.strip().str.upper()
+    practice_sessions['EventName_clean'] = practice_sessions['EventName'].apply(preprocess_string)
+    races['name_clean'] = races['name'].apply(preprocess_string)
     drivers['code'] = drivers['code'].str.strip().str.upper()
+    practice_sessions['Driver'] = practice_sessions['Driver'].str.strip().str.upper()
+
+    # Merge with races to get raceId
+    practice_sessions = practice_sessions.merge(
+        races[['raceId', 'year', 'name_clean']],
+        left_on=['Year', 'EventName_clean'],
+        right_on=['year', 'name_clean'],
+        how='left',
+        indicator=True
+    )
+
+    # Handle unmatched races
+    unmatched_practice = practice_sessions[practice_sessions['_merge'] == 'left_only']
+    if not unmatched_practice.empty:
+        logging.warning("Unmatched races in practice session data:")
+        logging.warning(unmatched_practice[['EventName', 'Year']].drop_duplicates())
+
+        # Use fuzzy matching to find possible matches
+        unmatched_event_names = unmatched_practice['EventName_clean'].unique()
+        races_event_names = races['name_clean'].unique()
+        event_name_mapping = {}
+        for event in unmatched_event_names:
+            match, score = process.extractOne(event, races_event_names)
+            if score >= 80:
+                event_name_mapping[event] = match
+                logging.info(f"Mapping '{event}' to '{match}' with score {score}")
+            else:
+                logging.warning(f"No suitable match found for '{event}'")
+
+        # Apply the mappings
+        for event, match in event_name_mapping.items():
+            practice_sessions.loc[practice_sessions['EventName_clean'] == event, 'EventName_clean'] = match
+
+        # Retry the merge after applying mappings
+        practice_sessions = practice_sessions.merge(
+            races[['raceId', 'year', 'name_clean']],
+            left_on=['Year', 'EventName_clean'],
+            right_on=['year', 'name_clean'],
+            how='left',
+            indicator=False
+        )
+
+    # Map driver codes to driverId
     driver_code_to_id = drivers.set_index('code')['driverId'].to_dict()
     practice_sessions['driverId'] = practice_sessions['Driver'].map(driver_code_to_id)
-    
     # Convert LapTime to milliseconds
-    practice_sessions['LapTime_ms'] = practice_sessions['LapTime'].apply(lambda x: pd.to_timedelta(x).total_seconds() * 1000)
-    
-    # Calculate median lap times for each driver in each session (per race)
-    session_medians = practice_sessions.groupby(['raceId', 'driverId', 'SessionName'])['LapTime_ms'].median().reset_index()
-
-    # Pivot the data to have sessions as columns (preserves raceId and driverId context)
+    practice_sessions['LapTime_ms'] = practice_sessions['LapTime'].apply(
+        lambda x: pd.to_timedelta(x, errors='coerce').total_seconds() * 1000
+    )
+    # Calculate median lap times per driver per session
+    session_medians = practice_sessions.groupby(
+        ['raceId', 'driverId', 'SessionName']
+    )['LapTime_ms'].median().reset_index()
+    # Pivot sessions into columns
     session_medians_pivot = session_medians.pivot_table(
-        index=['raceId', 'driverId'],  # Keep raceId and driverId as indices
+        index=['raceId', 'driverId'],
         columns='SessionName',
         values='LapTime_ms'
     ).reset_index()
-
-    # Rename columns for clarity
+    # Rename columns
     session_medians_pivot.rename(columns={
         'FP1': 'fp1_median_time',
         'FP2': 'fp2_median_time',
         'FP3': 'fp3_median_time',
         'Q': 'quali_time'
     }, inplace=True)
-
-
-    laps = laps.merge(
-        session_medians_pivot,
-        on=['raceId', 'driverId'],  # Merge on raceId and driverId
-        how='left'  # Ensure all laps data is retained
-    )
-
-    # Calculate global median times for each FP session within each race
-    global_medians = session_medians.groupby('SessionName')['LapTime_ms'].median()
-
-    # Fill missing FP times for each session
-    laps['fp1_median_time'].fillna(global_medians.get('FP1', 0), inplace=True)
-    laps['fp2_median_time'].fillna(global_medians.get('FP2', 0), inplace=True)
-    laps['fp3_median_time'].fillna(global_medians.get('FP3', 0), inplace=True)
-    laps['quali_time'].fillna(global_medians.get('Q', 0), inplace=True)
-
-
-    # For missing session times, fill with global means for that session within the same race
+    # Merge into laps
+    laps = laps.merge(session_medians_pivot, on=['raceId', 'driverId'], how='left')
+    # Fill missing session times with global medians
     for session in ['fp1_median_time', 'fp2_median_time', 'fp3_median_time', 'quali_time']:
-        global_mean_column = f'global_mean_{session}'
-        laps[global_mean_column] = laps.groupby('raceId')[session].transform('mean')  # Calculate global mean for the session
-        laps[session] = laps[session].fillna(laps[global_mean_column])  # Fill missing session times with global means
-        laps.drop(columns=[global_mean_column], inplace=True)  # Remove intermediate column
+        global_median = laps[session].median()
+        laps[session].fillna(global_median, inplace=True)
+    return laps
 
-    # Ensure session times are now part of the driver-specific attributes
-
-
+def add_driver_metrics(
+    laps: pd.DataFrame,
+    drivers: pd.DataFrame,
+    results: pd.DataFrame,
+    lap_times: pd.DataFrame,
+    status: pd.DataFrame,
+    races: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Calculates and adds driver aggression, skill, consistency, and reliability metrics.
     
-    # Create a binary indicator for pit stops
-    laps['is_pit_lap'] = laps['pitstop_milliseconds'].apply(lambda x: 1 if x > 0 else 0)
-
-    
-    # Define a function to match weather data to laps
-    def match_weather_to_lap(race_laps, race_weather):
-        try:
-            # Copy DataFrames to avoid modifying originals
-            race_laps = race_laps.copy()
-            race_weather = race_weather.copy()
-            
-            # Convert 'seconds_from_start' to numeric
-            race_laps['seconds_from_start'] = pd.to_numeric(race_laps['seconds_from_start'], errors='coerce')
-            race_weather['seconds_from_start'] = pd.to_numeric(race_weather['seconds_from_start'], errors='coerce')
-            
-            # Drop rows with NaN in 'seconds_from_start'
-            race_laps.dropna(subset=['seconds_from_start'], inplace=True)
-            race_weather.dropna(subset=['seconds_from_start'], inplace=True)
-            
-            # **Select only necessary columns from race_weather**
-            race_weather = race_weather[['seconds_from_start', 'TrackTemp', 'AirTemp', 'Humidity']]
-            
-            # Sort DataFrames by 'seconds_from_start'
-            race_laps.sort_values('seconds_from_start', inplace=True)
-            race_weather.sort_values('seconds_from_start', inplace=True)
-            
-            # Perform the asof merge
-            merged = pd.merge_asof(
-                race_laps,
-                race_weather,
-                on='seconds_from_start',
-                direction='nearest'
-            )
-
-            # Debugging output
-            print(merged[['seconds_from_start', 'TrackTemp', 'AirTemp', 'Humidity']].head())
-            
-            if merged.empty:
-                print("Warning: Merged result is empty. Check if there is overlapping time data.")
-                
-            return merged
-        
-        except Exception as e:
-            print(f"Error in matching weather to lap data: {str(e)}")
-            print("\nRace laps seconds_from_start dtype:", race_laps['seconds_from_start'].dtype)
-            print("Race weather seconds_from_start dtype:", race_weather['seconds_from_start'].dtype)
-            print("\nSample of race_laps seconds_from_start:", race_laps['seconds_from_start'].head())
-            print("\nSample of race_weather seconds_from_start:", race_weather['seconds_from_start'].head())
-            raise
-
-
-    def match_weather_to_laps(laps, races, weather_data):
-        # Initialize list to store merged laps data
-        merged_laps_list = []
-
-        for race_id in laps['raceId'].unique():
-            race_laps = laps[laps['raceId'] == race_id].copy()
-            race_info = races[races['raceId'] == race_id][['year', 'name']].iloc[0]
-            race_year = race_info['year']
-            race_name = race_info['name']
-            race_weather = weather_data[weather_data['raceId'] == race_id]
-
-            print(f"\nProcessing race {race_id} ({race_year} {race_name})")
-
-            if not race_weather.empty:
-                try:
-                    # Perform the matching
-                    merged = match_weather_to_lap(race_laps, race_weather)
-                    print(f"Successfully matched weather data - Found {len(race_weather)} weather records")
-                    merged_laps_list.append(merged)
-                except Exception as e:
-                    print(f"Error matching weather data for race {race_id}: {str(e)}")
-                    # If there's an error, append race_laps without weather data
-                    merged_laps_list.append(race_laps)
-            else:
-                print(f"No weather data found for race - Assigning default weather values")
-                # Assign default weather values to race_laps
-                race_laps['TrackTemp'] = 25.0
-                race_laps['AirTemp'] = 20.0
-                race_laps['Humidity'] = 50.0
-                merged_laps_list.append(race_laps)
-
-        # Concatenate all race laps back into a single DataFrame
-        laps_with_weather = pd.concat(merged_laps_list, ignore_index=True)
-
-        # Fill any remaining missing weather data with defaults
-        laps_with_weather['TrackTemp'].fillna(25.0, inplace=True)
-        laps_with_weather['AirTemp'].fillna(20.0, inplace=True)
-        laps_with_weather['Humidity'].fillna(50.0, inplace=True)
-
-        print("Columns in laps DataFrame:", laps_with_weather.columns.tolist())
-        print("Sample data after merging weather data:")
-        print(laps_with_weather[['raceId', 'lap', 'TrackTemp', 'AirTemp', 'Humidity']].head())
-
-
-        # **Drop any duplicated columns resulting from the merge**
-        # For example, if 'lap' appears as 'lap_x' and 'lap_y'
-        columns_to_drop = [col for col in laps_with_weather.columns if col.endswith('_x') or col.endswith('_y')]
-        laps_with_weather.drop(columns=columns_to_drop, inplace=True, errors='ignore')
-
-        print("Final weather columns added and cleaned:")
-        print(laps_with_weather[['raceId', 'lap', 'TrackTemp', 'AirTemp', 'Humidity']].head())
-
-        return laps_with_weather
-
-
-    print(f"Shape of laps before merging weather data: {laps.shape}")
-    laps = match_weather_to_laps(laps, races, weather_data)
-    print(f"Shape of laps after merging weather data: {laps.shape}")
-
-    # Check for duplicates after merging weather data
-    duplicates = laps[laps.duplicated()]
-    if not duplicates.empty:
-        print(f"Warning: {len(duplicates)} duplicate rows found after merging weather data.")
-        print("Sample of duplicate rows:")
-        print(duplicates.head())
-    else:
-        print("No duplicate rows found after merging weather data.")
-
-    # Calculate driver aggression and skill
-    # Create driver names
+    Returns:
+        pd.DataFrame: The laps DataFrame with driver metrics.
+    """
+    # Merge necessary data
     drivers['driver_name'] = drivers['forename'] + ' ' + drivers['surname']
-    driver_mapping = drivers[['driverId', 'driver_name']].copy()
-    driver_mapping.set_index('driverId', inplace=True)
-    driver_names = driver_mapping['driver_name'].to_dict()
-    
-    # Map statusId to status descriptions
-    status_dict = status.set_index('statusId')['status'].to_dict()
-    results['status'] = results['statusId'].map(status_dict)
-    
-    # Calculate driver aggression and skill
-    def calculate_aggression(driver_results):
-        if len(driver_results) == 0:
-            return 0.5  # Default aggression for new drivers
-        
-        # Only consider recent races for more current behavior
-        recent_results = driver_results.sort_values('date', ascending=False).head(20)
-        
-        # Calculate overtaking metrics
-        positions_gained = recent_results['grid'] - recent_results['positionOrder']
-        
-        # Calculate risk metrics
-        dnf_rate = (recent_results['status'] != 'Finished').mean()
-        incidents = (recent_results['statusId'].isin([
-            4,  # Collision
-            5,  # Spun off
-            6,  # Accident
-            20, # Collision damage
-            82, # Collision with another driver
-        ])).mean()
-        
-        # Calculate overtaking success rate (normalized between 0-1)
-        positive_overtakes = (positions_gained > 0).sum()
-        negative_overtakes = (positions_gained < 0).sum()
-        total_overtake_attempts = positive_overtakes + negative_overtakes
-        overtake_success_rate = positive_overtakes / total_overtake_attempts if total_overtake_attempts > 0 else 0.5
-        
-        # Normalize average positions gained (0-1)
-        avg_positions_gained = positions_gained[positions_gained > 0].mean() if len(positions_gained[positions_gained > 0]) > 0 else 0
-        max_possible_gain = 20  # Maximum grid positions that could be gained
-        normalized_gains = np.clip(avg_positions_gained / max_possible_gain, 0, 1)
-        
-        # Normalize risk factors (0-1)
-        normalized_dnf = np.clip(dnf_rate, 0, 1)
-        normalized_incidents = np.clip(incidents, 0, 1)
-        
-        # Calculate component scores (each between 0-1)
-        overtaking_component = (normalized_gains * 0.6 + overtake_success_rate * 0.4)
-        risk_component = (normalized_dnf * 0.5 + normalized_incidents * 0.5)
-        
-        # Combine components with weights (ensuring sum of weights = 1)
-        weights = {
-            'overtaking': 0.4,  # Aggressive overtaking
-            'risk': 0.5,       # Risk-taking behavior
-            'baseline': 0.1    # Baseline aggression
-        }
-        
-        aggression = (
-            overtaking_component * weights['overtaking'] +
-            risk_component * weights['risk'] +
-            0.5 * weights['baseline']  # Baseline aggression factor
-        )
-        
-        # Add small random variation while maintaining 0-1 bounds
-        variation = np.random.normal(0, 0.02)
-        aggression = np.clip(aggression + variation, 0, 1)
-        
-        return aggression
-    
-    def calculate_consistency(lap_times_df, driver_id, num_recent_races=5):
-        """
-        Calculate driver consistency based on lap time variability over recent races.
-        Args:
-            lap_times_df (DataFrame): DataFrame containing lap times.
-            driver_id (int): Driver ID.
-            num_recent_races (int): Number of recent races to consider.
-        Returns:
-            float: Consistency score between 0 and 1.
-        """
-        # Filter lap times for the driver
-        driver_lap_times = lap_times_df[lap_times_df['driverId'] == driver_id]
-        
-        # Get recent race IDs
-        recent_races = driver_lap_times['raceId'].unique()
-        recent_races = sorted(recent_races, reverse=True)[:num_recent_races]
-        
-        # Filter lap times for recent races
-        recent_lap_times = driver_lap_times[driver_lap_times['raceId'].isin(recent_races)]
-        
-        if recent_lap_times.empty or len(recent_lap_times) < 5:
-            return 0.5  # Default consistency for insufficient data
-        
-        # Calculate lap time variance
-        lap_time_variance = recent_lap_times['milliseconds'].var()
-        
-        # Normalize variance (lower variance means higher consistency)
-        # Invert and normalize between 0 and 1
-        max_variance = lap_times_df['milliseconds'].var()
-        consistency_score = 1 - (lap_time_variance / max_variance)
-        consistency_score = np.clip(consistency_score, 0, 1)
-        
-        return consistency_score
-
-    def calculate_reliability(driver_results, num_recent_races=10):
-        """
-        Calculate driver reliability based on race finishes over recent races.
-        Args:
-            driver_results (DataFrame): DataFrame containing driver results.
-            num_recent_races (int): Number of recent races to consider.
-        Returns:
-            float: Reliability score between 0 and 1.
-        """
-        # Get recent races
-        recent_results = driver_results.sort_values('date', ascending=False).head(num_recent_races)
-        
-        if recent_results.empty or len(recent_results) == 0:
-            return 0.5  # Default reliability for new drivers
-        
-        # Calculate proportion of races finished
-        races_finished = (recent_results['status'] == 'Finished').sum()
-        total_races = len(recent_results)
-        reliability_score = races_finished / total_races
-        reliability_score = np.clip(reliability_score, 0, 1)
-        
-        return reliability_score
-
-    
-    # Modify calculate_skill function
-    def calculate_skill(driver_data, results_data, circuit_id, constructor_performance):
-        driver_results = results_data[
-            (results_data['driverId'] == driver_data['driverId']) & 
-            (results_data['circuitId'] == circuit_id)
-        ].sort_values('date', ascending=False).head(10)  # Use last 10 races at circuit
-        
-        if len(driver_results) == 0:
-            return 0.5  # Default skill
-        
-        # Calculate performance metrics
-        avg_finish_pos = driver_results['positionOrder'].mean()
-        avg_quali_pos = driver_results['grid'].mean()
-        points_per_race = driver_results['points'].mean()
-        fastest_laps = (driver_results['rank'] == 1).mean()
-        
-        # Include constructor performance
-        constructor_factor = np.exp(-constructor_performance / 100)
-        
-        # Improved normalization (exponential decay for positions)
-        normalized_finish_pos = np.exp(-avg_finish_pos/5) # Better spread of values
-        normalized_quali_pos = np.exp(-avg_quali_pos/5)
-        
-        # Points normalization with improved scaling
-        max_points_per_race = 26  # Maximum possible points (25 + 1 fastest lap)
-        normalized_points = points_per_race / max_points_per_race
-        
-        # Weighted combination with more factors
-        weights = {
-            'finish': 0.35,
-            'quali': 0.25,
-            'points': 0.25,
-            'fastest_laps': 0.15
-        }
-        
-        skill = (
-            weights['finish'] * normalized_finish_pos +
-            weights['quali'] * normalized_quali_pos +
-            weights['points'] * normalized_points +
-            weights['fastest_laps'] * fastest_laps +
-            0.1 * constructor_factor  # Adjust weight as needed
-        )
-        
-        # Add random variation to prevent identical skills
-        skill = np.clip(skill + np.random.normal(0, 0.05), 0.1, 1.0)
-    
-        return skill
-    
-    # First merge results with races to get circuitId
     results = results.merge(
-        races[['raceId', 'circuitId']], 
+        races[['raceId', 'circuitId']],
         on='raceId',
         how='left'
     )
-
-    # Map statusId to status descriptions
     status_dict = status.set_index('statusId')['status'].to_dict()
     results['status'] = results['statusId'].map(status_dict)
-    
-    # Copy lap_times DataFrame for consistency calculations
     lap_times_df = lap_times.copy()
-    
-    # Now calculate driver aggression, skill, consistency, and reliability
+
+    # Calculate driver metrics
     driver_aggression = {}
     driver_skill = {}
     driver_consistency = {}
     driver_reliability = {}
+
     for driver_id in drivers['driverId'].unique():
         driver_results = results[results['driverId'] == driver_id]
-        
-        # Calculate aggression
         aggression = calculate_aggression(driver_results)
         driver_aggression[driver_id] = aggression
-        
-        # Calculate skill
-        recent_race = driver_results.sort_values('date', ascending=False).head(1)
-        if not recent_race.empty:
-            circuit_id = recent_race['circuitId'].iloc[0]
-            constructor_performance = laps.loc[laps['driverId'] == driver_id, 'constructor_performance'].mean()
-            skill = calculate_skill({'driverId': driver_id}, results, circuit_id, constructor_performance)
-            driver_skill[driver_id] = skill
-        else:
-            driver_skill[driver_id] = 0.5  # Default skill for new drivers
-        
-        # Calculate consistency
-        consistency = calculate_consistency(lap_times_df, driver_id, num_recent_races=5)
+
+        skill = calculate_skill(driver_results)
+        driver_skill[driver_id] = skill
+
+        consistency = calculate_consistency(lap_times_df, driver_id)
         driver_consistency[driver_id] = consistency
-        
-        # Calculate reliability
-        reliability = calculate_reliability(driver_results, num_recent_races=10)
+
+        reliability = calculate_reliability(driver_results)
         driver_reliability[driver_id] = reliability
-    
-    # Map calculated metrics back to laps DataFrame
+
+    # Map metrics back to laps DataFrame
     laps['driver_aggression'] = laps['driverId'].map(driver_aggression)
     laps['driver_overall_skill'] = laps['driverId'].map(driver_skill)
-    laps['driver_circuit_skill'] = laps['driver_overall_skill']  # For simplicity, using overall skill
+    laps['driver_circuit_skill'] = laps['driver_overall_skill']  # For simplicity
     laps['driver_consistency'] = laps['driverId'].map(driver_consistency)
     laps['driver_reliability'] = laps['driverId'].map(driver_reliability)
-    laps['driver_risk_taking'] = laps['driver_aggression']  # Assuming similar to aggression
+    laps['driver_risk_taking'] = laps['driver_aggression']
+    return laps
+
+def calculate_aggression(driver_results: pd.DataFrame) -> float:
+    """
+    Calculates driver aggression based on overtaking and risk metrics.
     
+    Returns:
+        float: Aggression score between 0 and 1.
+    """
+    if driver_results.empty:
+        return 0.5  # Default aggression
+
+    recent_results = driver_results.sort_values('date', ascending=False).head(20)
+    positions_gained = recent_results['grid'] - recent_results['positionOrder']
+    dnf_rate = (recent_results['status'] != 'Finished').mean()
+    incidents = (recent_results['statusId'].isin([4, 5, 6, 20, 82])).mean()
+    positive_overtakes = (positions_gained > 0).sum()
+    negative_overtakes = (positions_gained < 0).sum()
+    total_overtakes = positive_overtakes + negative_overtakes
+    overtake_success_rate = positive_overtakes / total_overtakes if total_overtakes > 0 else 0.5
+    avg_positions_gained = positions_gained[positions_gained > 0].mean() or 0
+    normalized_gains = np.clip(avg_positions_gained / 20, 0, 1)
+    normalized_dnf = np.clip(dnf_rate, 0, 1)
+    normalized_incidents = np.clip(incidents, 0, 1)
+    overtaking_component = (normalized_gains * 0.6 + overtake_success_rate * 0.4)
+    risk_component = (normalized_dnf * 0.5 + normalized_incidents * 0.5)
+    aggression = (
+        overtaking_component * 0.4 +
+        risk_component * 0.5 +
+        0.5 * 0.1  # Baseline aggression
+    )
+    # Add small random variation
+    aggression = np.clip(aggression + np.random.normal(0, 0.02), 0, 1)
+    return aggression
+
+def calculate_skill(driver_results: pd.DataFrame) -> float:
+    """
+    Calculates driver skill based on performance metrics.
     
-    # Dynamic features
+    Returns:
+        float: Skill score between 0 and 1.
+    """
+    recent_results = driver_results.sort_values('date', ascending=False).head(10)
+    if recent_results.empty:
+        return 0.5  # Default skill
+
+    avg_finish_pos = recent_results['positionOrder'].mean()
+    avg_quali_pos = recent_results['grid'].mean()
+    points_per_race = recent_results['points'].mean()
+    fastest_laps = (recent_results['rank'] == 1).mean()
+    normalized_finish_pos = np.exp(-avg_finish_pos / 5)
+    normalized_quali_pos = np.exp(-avg_quali_pos / 5)
+    max_points_per_race = 26  # Max possible points
+    normalized_points = points_per_race / max_points_per_race
+    skill = (
+        0.35 * normalized_finish_pos +
+        0.25 * normalized_quali_pos +
+        0.25 * normalized_points +
+        0.15 * fastest_laps
+    )
+    skill = np.clip(skill + np.random.normal(0, 0.05), 0.1, 1.0)
+    return skill
+
+def calculate_consistency(lap_times_df: pd.DataFrame, driver_id: int) -> float:
+    """
+    Calculates driver consistency based on lap time variability.
+    
+    Returns:
+        float: Consistency score between 0 and 1.
+    """
+    driver_lap_times = lap_times_df[lap_times_df['driverId'] == driver_id]
+    recent_races = sorted(driver_lap_times['raceId'].unique(), reverse=True)[:5]
+    recent_lap_times = driver_lap_times[driver_lap_times['raceId'].isin(recent_races)]
+    if recent_lap_times.empty or len(recent_lap_times) < 5:
+        return 0.5  # Default consistency
+
+    lap_time_variance = recent_lap_times['milliseconds'].var()
+    max_variance = lap_times_df['milliseconds'].var()
+    consistency_score = 1 - (lap_time_variance / max_variance)
+    consistency_score = np.clip(consistency_score, 0, 1)
+    return consistency_score
+
+def calculate_reliability(driver_results: pd.DataFrame) -> float:
+    """
+    Calculates driver reliability based on race finishes.
+    
+    Returns:
+        float: Reliability score between 0 and 1.
+    """
+    recent_results = driver_results.sort_values('date', ascending=False).head(10)
+    if recent_results.empty:
+        return 0.5  # Default reliability
+
+    races_finished = (recent_results['status'] == 'Finished').sum()
+    total_races = len(recent_results)
+    reliability_score = races_finished / total_races
+    reliability_score = np.clip(reliability_score, 0, 1)
+    return reliability_score
+
+def add_dynamic_features(laps: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds dynamic features such as tire age, fuel load, and track position.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame with dynamic features.
+    """
     laps['tire_age'] = laps.groupby(['raceId', 'driverId'])['lap'].cumcount()
     laps['fuel_load'] = laps.groupby(['raceId', 'driverId'])['lap'].transform(lambda x: x.max() - x + 1)
-    laps['track_position'] = laps['position']  # Assuming 'position' is available in laps data
-    
-    # Ensure that all required columns are present
-    # Create an instance of RaceFeatures
-    race_features = RaceFeatures()
-
-    
+    laps['track_position'] = laps['positionOrder']
+    laps['is_pit_lap'] = laps['pitstop_milliseconds'].apply(lambda x: 1 if x > 0 else 0)
     laps['TrackStatus'].fillna(1, inplace=True)  # 1 = regular racing status
+    return laps
 
-    # Continue with outlier removal and other preprocessing steps
-    def remove_lap_time_outliers(df, iqr_multiplier=1.5):
-        """
-        Remove lap time outliers using IQR method, considering only normal racing laps.
-        
-        Args:
-            df: DataFrame containing lap times and related features
-            iqr_multiplier: IQR multiplier for outlier threshold (default 1.5)
-        
-        Returns:
-            DataFrame with outliers removed
-        """
-        df = df.copy()
-        print(f"Shape before filtering and outlier removal: {df.shape}")
-        
-        # Filter out special laps
-        normal_racing_mask = (
-            (df['TrackStatus'] == 1) &      # Normal racing conditions
-            (df['is_pit_lap'] == 0) &       # No pit stops
-            #(df['lap'] > 1) &
-            (df['milliseconds'] < 150000)   # Exclude first lap
-        )
-        
-        special_laps = df[~normal_racing_mask]
-        normal_laps = df[normal_racing_mask]
-        
-        print(f"Normal racing laps: {normal_laps.shape}")
-        print(f"Special laps (pit stops, safety car, etc.): {special_laps.shape}")
-        
-        def remove_outliers_group(group):
-            Q1 = group['milliseconds'].quantile(0.25)
-            Q3 = group['milliseconds'].quantile(0.75)
-            IQR = Q3 - Q1
-            
-            lower_bound = Q1 - iqr_multiplier * IQR
-            upper_bound = Q3 + iqr_multiplier * IQR
-            
-            return group[(group['milliseconds'] >= lower_bound) & 
-                        (group['milliseconds'] <= upper_bound)]
-        
-        # Remove outliers only from normal racing laps
-        cleaned_normal_laps = normal_laps.groupby('circuitId').apply(remove_outliers_group)
-        cleaned_normal_laps.reset_index(drop=True, inplace=True)
-        
-        # Combine cleaned normal laps with special laps
-        special = pd.concat([cleaned_normal_laps, special_laps], ignore_index=True)
-        
-        print(f"Final shape after outlier removal: {special.shape}")
-        
-        return cleaned_normal_laps, special
-
-    # Apply outlier removal
-    laps, special_laps = remove_lap_time_outliers(laps)
+def remove_lap_time_outliers(
+    df: pd.DataFrame,
+    iqr_multiplier: float = 1.5
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Removes lap time outliers using the IQR method.
     
-    # Update required columns
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: Cleaned laps DataFrame and special laps DataFrame.
+    """
+    df = df.copy()
+    normal_racing_mask = (
+        (df['TrackStatus'] == 1) &
+        (df['is_pit_lap'] == 0) &
+        (df['milliseconds'] < 150000)
+    )
+    special_laps = df[~normal_racing_mask]
+    normal_laps = df[normal_racing_mask]
+
+    def remove_outliers_group(group):
+        Q1 = group['milliseconds'].quantile(0.25)
+        Q3 = group['milliseconds'].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - iqr_multiplier * IQR
+        upper_bound = Q3 + iqr_multiplier * IQR
+        return group[(group['milliseconds'] >= lower_bound) & (group['milliseconds'] <= upper_bound)]
+
+    cleaned_normal_laps = normal_laps.groupby('circuitId').apply(remove_outliers_group).reset_index(drop=True)
+    return cleaned_normal_laps, special_laps
+
+def drop_unnecessary_columns(laps: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drops unnecessary columns from the laps DataFrame.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame with unnecessary columns dropped.
+    """
+    columns_to_drop = ['EventFormat', 'EventName', 'S', 'SessionName', 'R', 'Time', 'Year', 'WindDirection', 
+        'WindSpeed', 'WindSpeed', 'circuitRef', 'constructor_name', 'cumulative_milliseconds', 
+        'date', 'date_race', 'dob', 'driverRef', 'fastestLap', 'forename', 'fp1_date', 
+        'fp1_time', 'fp2_date', 'fp2_time', 'fp3_date', 'fp3_time', 'location', 
+        'name', 'name_x', 'name_y', 'number', 'quali_date', 
+        'quali_date_time', 'rainfall', 'raceId_x', 'raceId_y', 'raceTime', 
+        'RoundNumber', 'sprint_date', 'sprint_time', 'surname', 'time', 'time_race', 
+        'url_race', 'url_x', 'url_y', 'year_x', 'year_y']
+    laps.drop(columns=columns_to_drop, axis=1, inplace=True, errors='ignore')
+    return laps
+
+def handle_missing_values(laps: pd.DataFrame) -> pd.DataFrame:
+    """
+    Handles missing values in the laps DataFrame.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame with missing values handled.
+    """
+    # Ensure required columns are present
     race_features = RaceFeatures()
     required_columns = race_features.static_features + race_features.dynamic_features
     missing_columns = set(required_columns) - set(laps.columns)
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
-    
-    # Drop rows with missing values in required columns
-    laps = laps[laps['year'] >= 2018]
-    laps = laps.dropna(subset=required_columns)
 
-    # Create driver-specific attributes per race
-    # Create driver-specific attributes per race, including constructorId
+    # Drop rows with missing values in required columns
+    laps.dropna(subset=required_columns, inplace=True)
+    return laps
+
+def save_auxiliary_data(
+    laps: pd.DataFrame,
+    drivers: pd.DataFrame,
+    races: pd.DataFrame,
+    special_laps: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Saves auxiliary data such as driver attributes and race attributes.
+    
+    Returns:
+        pd.DataFrame: The laps DataFrame.
+    """
+    # Create driver-specific attributes
     drivers_df = laps.groupby(['driverId', 'raceId']).agg({
         'driver_overall_skill': 'last',
         'driver_circuit_skill': 'last',
@@ -730,54 +768,30 @@ def preprocess_data():
         'driver_reliability': 'last',
         'driver_aggression': 'last',
         'driver_risk_taking': 'last',
-        'constructor_performance': 'last',  # Most recent constructor performance
-        'fp1_median_time': 'last',          # Include session times
+        'constructor_performance': 'last',
+        'fp1_median_time': 'last',
         'fp2_median_time': 'last',
         'fp3_median_time': 'last',
         'quali_time': 'last',
         'constructorId': 'last',
         'code': 'last'
     }).reset_index()
-
-    # Preview the updated DataFrame
-    drivers_df.head()
-
-
-    # Save the driver-specific attributes
     drivers_df.to_csv('data/util/drivers_attributes.csv', index=False)
 
-    # For race_attributes_df - aggregate race-specific attributes
+    # Create race-specific attributes
     race_attributes_df = laps.groupby('raceId').agg({
         'circuitId': 'first',
         'TrackTemp': 'mean',
         'AirTemp': 'mean',
         'Humidity': 'mean'
     }).reset_index()
-
-    # Save the race-specific attributes
     race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
 
-    # Drop unnecessary columns
-    columns_to_drop = [
-        'raceId_x', 'year_y', 'Time', 'Pressure', 'Rainfall', 'WindDirection', 'WindSpeed', 'Year', 'year_x', 'EventName', 
-        'SessionName', 'fp1_date', 'fp2_date', 'fp3_date', 'fp1_time', 'fp2_time',
-        'fp3_time', 'racetime_milliseconds', 'raceId_y', 'RoundNumber', 'name', 
-        'R', 'S', 'EventFormat', 'quali_date', 'quali_date_time', 'sprint_date', 
-        'sprint_time', 'url_y', 'fastestLap'
-    ]
-    laps = laps.drop(columns=columns_to_drop, axis=1, errors='ignore')
-
-    # Final race_attributes_df
-    race_attributes_df = laps[['raceId', 'circuitId', 'fp1_median_time', 'fp2_median_time',
-                               'fp3_median_time', 'quali_time', 'TrackTemp', 'AirTemp', 'Humidity']].drop_duplicates()
-
-    race_attributes_df.to_csv('data/util/race_attributes.csv', index=False)
-
+    # Save special laps
     special_laps.to_csv('data/SPECIAL_LAPS.csv', index=False)
 
+    # Save processed laps
     laps.to_csv('data/LAPS.csv', index=False)
-
-    # Return the preprocessed DataFrame
     return laps
 
 def load_and_preprocess_data():
@@ -860,16 +874,21 @@ def prepare_sequence_data(df, race_features, window_size=3):
         dynamic_features = group[race_features.dynamic_features].values
 
         # Create sequences using the sliding window
-        for i in range(len(lap_times) - window_size):
-            # Sequence of lap times and dynamic features
-            sequence_lap_times = lap_times[i:i + window_size]
-            sequence_dynamic = dynamic_features[i:i + window_size]
-            sequence = np.hstack((sequence_lap_times, sequence_dynamic))
+        
+        if len(lap_times) > window_size:
+            for i in range(len(lap_times) - window_size):
+                # Sequence of lap times and dynamic features
+                sequence_lap_times = lap_times[i:i + window_size]
+                sequence_dynamic = dynamic_features[i:i + window_size]
+                sequence = np.hstack((sequence_lap_times, sequence_dynamic))
 
-            # Append the sequence, static features, and target
-            sequences.append(sequence)
-            static_features.append(static)
-            targets.append(lap_times[i + window_size][0])  # Target is the lap time after the sequence
+                # Append the sequence, static features, and target
+                sequences.append(sequence)
+                static_features.append(static)
+                targets.append(lap_times[i + window_size][0])  # Target is the lap time after the sequence
+        else:
+            # Handle cases where there are not enough laps
+            continue
 
     return np.array(sequences), np.array(static_features), np.array(targets)
 
