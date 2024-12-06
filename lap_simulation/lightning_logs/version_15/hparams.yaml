@@ -1,6 +1,0 @@
-layer_config: !!python/tuple
-- 2
-- 64
-loss_fn: !!python/name:torch.nn.modules.loss.MSELoss ''
-lr: 0.005
-optimizer: !!python/name:torch.optim.adamw.AdamW ''

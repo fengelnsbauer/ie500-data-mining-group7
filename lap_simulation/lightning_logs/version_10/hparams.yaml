@@ -1,6 +1,0 @@
-layer_config: !!python/tuple
-- 2
-- 128
-loss_fn: !!python/name:torch.nn.modules.loss.L1Loss ''
-lr: 0.0005
-optimizer: !!python/name:torch.optim.sgd.SGD ''
