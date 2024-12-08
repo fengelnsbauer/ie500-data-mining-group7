@@ -1,9 +1,4 @@
-# ie500-data-mining-group7
+<img width="1134" alt="Screenshot 2024-12-08 at 19 38 02" src="https://github.com/user-attachments/assets/dcc073bf-10ad-4bbc-adad-50cb3a012bb6">
 
-Interesting papers:
-https://towardsdatascience.com/formula-1-race-predictor-5d4bfae887da
 
-# Ideas
-* Monte Carlo Simulation
-* Agent-Based Modeling
-* Pre-Train on old data up to 1996/2018
+# Beating the Odds — Predicting Race Positions in Formula 1
