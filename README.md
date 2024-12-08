@@ -15,7 +15,7 @@ Because the repository has gotten a bit messy over time, we provide quick links 
 
 - **[Simplified](https://github.com/fengelnsbauer/ie500-data-mining-group7/tree/main/simplified)**: Contains code for the second approach's regression and baseline, as well as a simplified modelling and simulation framework
 - **[Archive](https://github.com/fengelnsbauer/ie500-data-mining-group7/tree/main/archive)**: Experimentations with neural networks on race position dataset
-- **[Documents](https://github.com/fengelnsbauer/ie500-data-mining-group7/tree/main/documents)**: Collected Documents
+- **[Documents](https://github.com/fengelnsbauer/ie500-data-mining-group7/tree/main/documents)**: PDF Files, Paper References, Kaggle explainations
 
 
 
