@@ -31,6 +31,7 @@ optuna = "^4.1.0"
 flaml = {extras = ["automl"], version = "^2.3.2"}
 optuna-integration = "^4.1.0"
 thefuzz = "^0.22.1"
+nbstripout = "^0.8.1"
 
 
 [build-system]
