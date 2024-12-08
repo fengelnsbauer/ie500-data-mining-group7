@@ -153,9 +153,10 @@ def preprocess_data() -> pd.DataFrame:
     print(f"Unique races: {laps['raceId'].nunique()}")
     print(f"Unique drivers per race: {laps.groupby('raceId')['driverId'].nunique().describe()}")
     
-    laps, special_laps = remove_lap_time_outliers(laps)
+    laps = remove_lap_time_outliers(laps)
+    #laps, special_laps = remove_lap_time_outliers(laps)
     print(f"\nAfter removing outliers: {laps.shape}")
-    print(f"Special laps removed: {special_laps.shape}")
+    #print(f"Special laps removed: {special_laps.shape}")
     
     laps = drop_unnecessary_columns(laps)
     print(f"After dropping unnecessary columns: {laps.shape}")
@@ -174,7 +175,8 @@ def preprocess_data() -> pd.DataFrame:
     print(f"Final unique races: {laps['raceId'].nunique()}")
     print(f"Final unique drivers per race: {laps.groupby('raceId')['driverId'].nunique().describe()}")
     
-    laps = save_auxiliary_data(laps, drivers, races, special_laps)
+    #laps = save_auxiliary_data(laps, drivers, races, special_laps)
+    laps = save_auxiliary_data(laps, drivers, races)
     print(f"\nFinal dataset: {laps.shape}")
 
     return laps 
@@ -991,10 +993,7 @@ def add_tire_info(
     races: pd.DataFrame
 ) -> pd.DataFrame:
     """
-    Adds tire compound and track status information to laps DataFrame.
-    
-    Returns:
-        pd.DataFrame: The laps DataFrame with tire information.
+    Adds tire compound and track status information to laps DataFrame, now using TyreLife from tire_data as tire_age.
     """
     # Standardize text data
     tire_data['Compound'] = tire_data['Compound'].str.upper()
@@ -1005,6 +1004,7 @@ def add_tire_info(
 
     # Filter for race sessions
     tire_data = tire_data[tire_data['SessionName'] == 'R']
+
     # Merge with races to get raceId
     tire_data = tire_data.merge(
         races[['raceId', 'year', 'name_clean']],
@@ -1014,13 +1014,12 @@ def add_tire_info(
         indicator=True
     )
 
-    # Handle unmatched races
+    # Handle unmatched races (fuzzy matching already in original code)
     unmatched_tire = tire_data[tire_data['_merge'] == 'left_only']
     if not unmatched_tire.empty:
         logging.warning("Unmatched races in tire data:")
         logging.warning(unmatched_tire[['EventName', 'Year']].drop_duplicates())
 
-        # Use fuzzy matching to find possible matches
         unmatched_event_names = unmatched_tire['EventName_clean'].unique()
         races_event_names = races['name_clean'].unique()
         event_name_mapping = {}
@@ -1032,11 +1031,9 @@ def add_tire_info(
             else:
                 logging.warning(f"No suitable match found for '{event}'")
 
-        # Apply the mappings
         for event, match in event_name_mapping.items():
             tire_data.loc[tire_data['EventName_clean'] == event, 'EventName_clean'] = match
 
-        # Retry the merge after applying mappings
         tire_data = tire_data.merge(
             races[['raceId', 'year', 'name_clean']],
             left_on=['Year', 'EventName_clean'],
@@ -1048,7 +1045,8 @@ def add_tire_info(
     # Map driver codes to driverId
     driver_code_to_id = drivers.set_index('code')['driverId'].to_dict()
     tire_data['driverId'] = tire_data['Driver'].map(driver_code_to_id)
-    # Rename and ensure integer type
+
+    # Rename and ensure integer type for 'lap'
     tire_data.rename(columns={'LapNumber': 'lap'}, inplace=True)
     tire_data['lap'] = tire_data['lap'].astype(int, errors='ignore')
     laps['lap'] = laps['lap'].astype(int, errors='ignore')
@@ -1060,17 +1058,24 @@ def add_tire_info(
         'SUPERSOFT': 3, 'ULTRASOFT': 3, 'HYPERSOFT': 3,
         'INTERMEDIATE': 4, 'WET': 5
     }
-    # Merge tire_data with laps
+
+    # Merge tire_data with laps, now including TyreLife
     laps = laps.merge(
         tire_data[['raceId', 'driverId', 'lap', 'Compound', 'TrackStatus', 
-                'CumRaceTime_ms', 'GapToLeader_ms', 'IntervalToPositionAhead_ms']], 
+                   'CumRaceTime_ms', 'GapToLeader_ms', 'IntervalToPositionAhead_ms', 'TyreLife']], 
         on=['raceId', 'driverId', 'lap'],
         how='left'
     )
+
     # Handle missing compounds
     laps['Compound'].fillna('UNKNOWN', inplace=True)
     laps['tire_compound'] = laps['Compound'].map(compound_mapping)
     laps.drop('Compound', axis=1, inplace=True)
+
+    # Use TyreLife as tire_age, fill NaN with 0
+    laps['tire_age'] = laps['TyreLife'].fillna(0)
+    laps.drop('TyreLife', axis=1, inplace=True)
+
     return laps
 
 def clean_time_intervals(laps: pd.DataFrame) -> pd.DataFrame:
@@ -1642,47 +1647,56 @@ def enhance_driver_attributes(laps: pd.DataFrame, results: pd.DataFrame, races: 
 
 def add_dynamic_features(laps: pd.DataFrame) -> pd.DataFrame:
     """
-    Adds dynamic features such as tire age, fuel load, and track position.
-    
-    Returns:
-        pd.DataFrame: The laps DataFrame with dynamic features.
+    Adds dynamic features like fuel_load, track_position, and is_pit_lap.
+    The tire_age calculation is now handled by TyreLife from tire_data, so we remove the old calculation.
     """
-    laps['tire_age'] = laps.groupby(['raceId', 'driverId'])['lap'].cumcount()
+    # Remove the old tire_age calculation line
+    # laps['tire_age'] = laps.groupby(['raceId', 'driverId'])['lap'].cumcount()
+
     laps['fuel_load'] = laps.groupby(['raceId', 'driverId'])['lap'].transform(lambda x: x.max() - x + 1)
-    laps['track_position'] = laps['positionOrder']
+    #laps['track_position'] = laps['positionOrder']
     laps['is_pit_lap'] = laps['pitstop_milliseconds'].apply(lambda x: 1 if x > 0 else 0)
     laps['TrackStatus'].fillna(1, inplace=True)  # 1 = regular racing status
     return laps
 
-def remove_lap_time_outliers(
-    df: pd.DataFrame,
-    iqr_multiplier: float = 1.5
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def remove_lap_time_outliers(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Removes lap time outliers using the IQR method.
-    
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: Cleaned laps DataFrame and special laps DataFrame.
+    Only removes clearly invalid lap times (>150 seconds).
+    Keeps all other racing conditions and variations.
     """
     df = df.copy()
-    normal_racing_mask = (
-        (df['TrackStatus'] == 1) &
-        (df['is_pit_lap'] == 0) &
-        (df['milliseconds'] < 150000)
-    )
-    special_laps = df[~normal_racing_mask]
-    normal_laps = df[normal_racing_mask]
+    filtered_df = df[df['milliseconds'] < 150000]
+    return filtered_df
 
-    def remove_outliers_group(group):
-        Q1 = group['milliseconds'].quantile(0.25)
-        Q3 = group['milliseconds'].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - iqr_multiplier * IQR
-        upper_bound = Q3 + iqr_multiplier * IQR
-        return group[(group['milliseconds'] >= lower_bound) & (group['milliseconds'] <= upper_bound)]
+# def remove_lap_time_outliers(
+#     df: pd.DataFrame,
+#     iqr_multiplier: float = 1.5
+# ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+#     """
+#     Removes lap time outliers using the IQR method.
+    
+#     Returns:
+#         Tuple[pd.DataFrame, pd.DataFrame]: Cleaned laps DataFrame and special laps DataFrame.
+#     """
+#     df = df.copy()
+#     normal_racing_mask = (
+#         (df['TrackStatus'] == 1) &
+#         (df['is_pit_lap'] == 0) &
+#         (df['milliseconds'] < 150000)
+#     )
+#     special_laps = df[~normal_racing_mask]
+#     normal_laps = df[normal_racing_mask]
 
-    cleaned_normal_laps = normal_laps.groupby('circuitId').apply(remove_outliers_group).reset_index(drop=True)
-    return cleaned_normal_laps, special_laps
+#     def remove_outliers_group(group):
+#         Q1 = group['milliseconds'].quantile(0.25)
+#         Q3 = group['milliseconds'].quantile(0.75)
+#         IQR = Q3 - Q1
+#         lower_bound = Q1 - iqr_multiplier * IQR
+#         upper_bound = Q3 + iqr_multiplier * IQR
+#         return group[(group['milliseconds'] >= lower_bound) & (group['milliseconds'] <= upper_bound)]
+
+#     cleaned_normal_laps = normal_laps.groupby('circuitId').apply(remove_outliers_group).reset_index(drop=True)
+#     return cleaned_normal_laps, special_laps
 
 def drop_unnecessary_columns(laps: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1696,7 +1710,7 @@ def drop_unnecessary_columns(laps: pd.DataFrame) -> pd.DataFrame:
         'date', 'date_race', 'dob', 'driverRef', 'fastestLap', 'forename', 'fp1_date', 
         'fp1_time', 'fp2_date', 'fp2_time', 'fp3_date', 'fp3_time', 'location', 
         'name', 'name_x', 'name_y', 'number', 'quali_date', 'CumRaceTime_ms'
-        'quali_date_time', 'rainfall', 'raceId_x', 'raceId_y', 'raceTime', 
+        'quali_date_time', 'rainfall', 'raceId_x', 'raceId_y', 'raceTime', 'positionOrder', 'cumulative_milliseconds'
         'RoundNumber', 'sprint_date', 'sprint_time', 'surname', 'time', 'time_race', 
         'url_race', 'url_x', 'url_y', 'year_x', 'year_y', 'statusId', 'constructor_points', 'constructor_points']
     laps.drop(columns=columns_to_drop, axis=1, inplace=True, errors='ignore')
@@ -1771,7 +1785,6 @@ def save_auxiliary_data(
     laps: pd.DataFrame,
     drivers: pd.DataFrame,
     races: pd.DataFrame,
-    special_laps: pd.DataFrame
 ) -> pd.DataFrame:
     """
     Saves auxiliary data such as driver attributes, circuit attributes,
@@ -1815,7 +1828,7 @@ def save_auxiliary_data(
     weather_df.to_csv('../data/util/weather_data.csv', index=False)
 
     # Save special laps
-    special_laps.to_csv('../data/SPECIAL_LAPS.csv', index=False)
+    # special_laps.to_csv('../data/SPECIAL_LAPS.csv', index=False)
 
     # Save processed laps
     laps.to_csv('../data/LAPS.csv', index=False)
@@ -1838,121 +1851,3 @@ def load_and_preprocess_data():
 
     # Return the processed DataFrame
     return df
-
-def save_data_splits(train_df, test_df):
-    train_df.to_csv('../data/train/train_data.csv', index=False)
-    test_df.to_csv('../data/test/test_data.csv', index=False)
-
-def split_data_by_race(df, test_size=0.2, random_state=42):
-    gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
-    train_idx, test_idx = next(gss.split(df, groups=df['raceId']))
-    train_df = df.iloc[train_idx]
-    test_df = df.iloc[test_idx]
-    return train_df, test_df
-
-def load_data_splits() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Load the saved train/test splits."""
-    train_df = pd.read_csv('../data/train/train_data.csv')
-    test_df = pd.read_csv('../data/test/test_data.csv')
-    return train_df, test_df
-
-def prepare_regression_data(df):
-    X = df[[
-        'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',
-        'driver_reliability', 'driver_aggression', 'driver_risk_taking',
-        'fp1_median_time', 'fp2_median_time', 'fp3_median_time', 'quali_time',
-        'tire_age', 'fuel_load', 'track_position', 'TrackTemp',
-        'AirTemp', 'Humidity', 'tire_compound', 'TrackStatus', 'is_pit_lap'
-    ]]
-    y = df['milliseconds']
-    return X, y
-
-# data_preparation.py
-
-import numpy as np
-
-def prepare_sequence_data(df, race_features, window_size=3):
-    """
-    Prepare sequential data (X, static, y) from the given dataframe.
-
-    Steps:
-    - Group by (raceId, driverId).
-    - Sort by lap to ensure temporal order.
-    - Extract sequences of length window_size for dynamic features.
-    - Static features are taken from the first lap of the sequence (or aggregated).
-    - Target is lap_time (milliseconds) from the lap following the sequence, or from the last lap in the sequence.
-
-    Returns:
-        sequences: np.ndarray of shape (num_samples, window_size, 1 + dynamic_features_count)
-        static_features: np.ndarray of shape (num_samples, static_features_count)
-        targets: np.ndarray of shape (num_samples,)
-    """
-    sequences = []
-    static_data = []
-    targets = []
-
-    dynamic_cols = race_features.dynamic_features
-    static_cols = race_features.static_features
-    target_col = race_features.target
-
-    # Ensure sorting
-    df = df.sort_values(['raceId', 'driverId', 'lap'])
-
-    for (race_id, driver_id), group in df.groupby(['raceId', 'driverId']):
-        group = group.sort_values('lap')
-        # Convert to numpy for speed
-        group_dynamic = group[dynamic_cols].values
-        group_static = group[static_cols].iloc[0].values  # static features from first lap or stable for entire race/driver
-        group_target = group[target_col].values
-
-        # Create sequences
-        # For each possible window in the group
-        for i in range(len(group) - window_size):
-            seq = group_dynamic[i:i+window_size, :]
-            y = group_target[i+window_size-1]  # predict the last lap in the sequence or next lap if desired
-            sequences.append(seq)
-            static_data.append(group_static)
-            targets.append(y)
-
-    sequences = np.array(sequences)
-    static_data = np.array(static_data)
-    targets = np.array(targets)
-
-    return sequences, static_data, targets
-
-def filter_driver_races(df, min_laps=3):
-    """
-    Filters out driver-race combinations with fewer than min_laps.
-    """
-    counts = df.groupby(['raceId', 'driverId']).size().reset_index(name='lap_count')
-    valid = counts[counts['lap_count'] >= min_laps]
-    df_filtered = df.merge(valid[['raceId', 'driverId']], on=['raceId', 'driverId'], how='inner')
-    return df_filtered
-
-def prepare_features_for_xgboost(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Prepare features for XGBoost model.
-    
-    Args:
-        df (pd.DataFrame): Input DataFrame with lap data
-        
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: Features array (X) and target array (y)
-    """
-    feature_columns = [
-        # Static features
-        'driver_overall_skill', 'driver_circuit_skill', 'driver_consistency',
-        'driver_reliability', 'driver_aggression', 'driver_risk_taking',
-        'constructor_performance', 'fp1_median_time', 'fp2_median_time',
-        'fp3_median_time', 'quali_time', 'circuit_length', 'circuit_type_encoded', 'alt',
-        
-        # Dynamic features
-        'tire_age', 'fuel_load', 'TrackTemp', 'AirTemp', 'Humidity',
-        'tire_compound', 'track_position', 'GapToLeader_ms', 'IntervalToPositionAhead_ms',
-        'TrackStatus', 'is_pit_lap'
-    ]
-    
-    X = df[feature_columns].values
-    y = df['milliseconds'].values
-    
-    return X, y

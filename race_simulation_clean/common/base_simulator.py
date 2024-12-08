@@ -123,8 +123,6 @@ class BaseRaceSimulator:
         driver.dynamic_features.update({
             'lap': lap,
             'position': driver.current_position,
-            'positionOrder': driver.current_position,
-            'track_position': driver.current_position,
             'cumulative_milliseconds': driver.cumulative_race_time,
             'GapToLeader_ms': driver.gaptoLeader_ms,
             'IntervalToPositionAhead_ms': driver.intervaltopositionahead_ms

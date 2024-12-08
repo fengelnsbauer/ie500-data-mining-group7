@@ -31,7 +31,7 @@ class Race:
             'air_temp': 0.0,
             'humidity': 0.0
         }
-        self.current_lap = 0
+        self.lap = 0
         
         # Safety car and other race events
         self.safety_car_periods = []
@@ -44,7 +44,7 @@ class Race:
         return any(start <= lap <= end for start, end in self.safety_car_periods)
 
     def update_race_conditions(self, lap: int, new_conditions: dict):
-        self.current_lap = lap
+        self.lap = lap
         self.current_conditions.update(new_conditions)
         if self.check_safety_car(lap):
             self.current_conditions['track_status'] = 4

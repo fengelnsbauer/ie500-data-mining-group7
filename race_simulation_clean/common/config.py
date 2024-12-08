@@ -1,12 +1,6 @@
 # config.py
 PIT_STOP_DURATION = 20000  # ms
 
-TIRE_COMPOUND_EFFECTS = {
-    3: {'base_speed': 0.98, 'degradation_per_lap': 500},   # Soft
-    2: {'base_speed': 0.99, 'degradation_per_lap': 300},   # Medium  
-    1: {'base_speed': 1.0, 'degradation_per_lap': 200},    # Hard
-}
-
 DEFAULT_WEATHER = {
             'TrackTemp': 35.0,
             'AirTemp': 25.0,

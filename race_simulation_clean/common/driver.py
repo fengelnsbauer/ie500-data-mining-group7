@@ -44,7 +44,7 @@ class Driver:
         self.dynamic_features = {
             # Race progress
             'current_position': 0,
-            'current_lap': 1,
+            'lap': 1,
             'cumulative_race_time': 0.0,
             'lap_times': [],
             

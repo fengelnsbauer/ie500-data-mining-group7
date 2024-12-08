@@ -29,7 +29,6 @@ class F1RaceFeatures:
         self.dynamic_features: List[str] = [
             'tire_age',
             'fuel_load',
-            'track_position',
             'TrackTemp',
             'AirTemp',
             'Humidity',
@@ -56,7 +55,6 @@ class F1RaceFeatures:
             'lat',
             'lng',
             'alt',
-            'positionOrder',
             'grid',
             'status',
             'pitstop_milliseconds',

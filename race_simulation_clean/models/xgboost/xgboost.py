@@ -3,6 +3,7 @@ import optuna
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from typing import Dict, Tuple
+import pandas as pd
 import logging
 
 class F1XGBoostPredictor:
@@ -100,11 +101,17 @@ class F1XGBoostPredictor:
         test_features = self.processed_data['test']['features']
         test_targets = self.processed_data['test']['targets']
         
-        predictions = self.model.predict(test_features)
+        # Get predictions in scaled form
+        scaled_predictions = self.model.predict(test_features)
+        
+        # Convert both predictions and targets back to original scale
+        target_scaler = self.processed_data['scalers']['target_scaler']
+        predictions = target_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).ravel()
+        original_targets = target_scaler.inverse_transform(test_targets.reshape(-1, 1)).ravel()
         
         metrics = {
-            'rmse': np.sqrt(mean_squared_error(test_targets, predictions)),
-            'mae': mean_absolute_error(test_targets, predictions)
+            'rmse': np.sqrt(mean_squared_error(original_targets, predictions)),
+            'mae': mean_absolute_error(original_targets, predictions)
         }
         
         return metrics
@@ -115,7 +122,13 @@ class F1XGBoostPredictor:
             raise ValueError("Model needs to be trained before prediction")
         
         features = features.reshape(1, -1)
-        return self.model.predict(features)[0]
+        scaled_prediction = self.model.predict(features)[0]
+        
+        # Convert prediction back to original scale
+        target_scaler = self.processed_data['scalers']['target_scaler']
+        prediction = target_scaler.inverse_transform([[scaled_prediction]])[0][0]
+        
+        return prediction
     
     def save_model(self, filepath: str):
         """Save the trained model."""
@@ -127,3 +140,61 @@ class F1XGBoostPredictor:
         """Load a trained model."""
         self.model = xgb.XGBRegressor()
         self.model.load_model(filepath)
+
+    @classmethod
+    def try_feature_subsets(cls, processed_data: Dict, max_combinations: int = 100):
+        """Test different feature combinations for XGBoost."""
+        from itertools import combinations
+        
+        static_features = processed_data['feature_info']['static_features']
+        dynamic_features = processed_data['feature_info']['dynamic_features']
+        all_features = static_features + dynamic_features
+        
+        # Define feature groups for smarter combinations
+        driver_features = [f for f in all_features if 'driver' in f]
+        car_features = [f for f in all_features if 'constructor' in f or 'tire' in f or 'fuel' in f]
+        track_features = [f for f in all_features if 'circuit' in f or 'Track' in f]
+        position_features = [f for f in all_features if 'position' in f or 'Gap' in f or 'Interval' in f]
+        
+        results = []
+        
+        # Try different combinations of feature groups
+        feature_groups = [driver_features, car_features, track_features, position_features]
+        for r in range(1, len(feature_groups) + 1):
+            for group_combo in combinations(feature_groups, r):
+                selected_features = list(set([f for group in group_combo for f in group]))
+                
+                # Create subset of data
+                subset_data = {
+                    'train': {
+                        'features': processed_data['train']['features'][:, [all_features.index(f) for f in selected_features]],
+                        'targets': processed_data['train']['targets'],
+                        'metadata': processed_data['train']['metadata']
+                    },
+                    'test': {
+                        'features': processed_data['test']['features'][:, [all_features.index(f) for f in selected_features]],
+                        'targets': processed_data['test']['targets'],
+                        'metadata': processed_data['test']['metadata']
+                    },
+                    'feature_info': {
+                        'static_features': [f for f in selected_features if f in static_features],
+                        'dynamic_features': [f for f in selected_features if f in dynamic_features]
+                    }
+                }
+                
+                # Train and evaluate model
+                predictor = cls(subset_data)
+                study = predictor.optimize(n_trials=50)  # Fewer trials for exploration
+                # Update model evaluation to use scaled metrics
+                metrics = predictor.evaluate()  # The evaluate method now handles scaling internally
+                
+                results.append({
+                    'features': selected_features,
+                    'rmse': metrics['rmse'],  # This is now in original milliseconds scale
+                    'n_features': len(selected_features),
+                    'feature_groups': [str(g) for g in group_combo],
+                    'best_params': study.best_params
+                })
+                
+        results_df = pd.DataFrame(results)
+        return results_df.sort_values('rmse')
